@@ -1,45 +1,37 @@
 package com.bezel.squeeze
 
+import android.animation.ValueAnimator
 import android.accessibilityservice.AccessibilityService
-import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.*
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.view.*
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import androidx.dynamicanimation.animation.FloatPropertyCompat
-import androidx.dynamicanimation.animation.SpringAnimation
-import androidx.dynamicanimation.animation.SpringForce
+import android.view.animation.PathInterpolator
 
 class BezelAccessibilityService : AccessibilityService() {
 
+    companion object {
+        var isCapturingExtraKey = false
+        var onKeyCapturedCallback: ((Int) -> Unit)? = null
+    }
+
     private lateinit var windowManager: WindowManager
     private lateinit var overlayView: BezelBulgeView
-    private var powerStripView: View? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var isHoldingKey = false
-
-    private val screenReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
-                if (prefs.getBoolean("enable_power_button", true)) {
-                    overlayView.onPowerPress()
-                    mainHandler.postDelayed({ overlayView.onButtonRelease() }, 200L)
-                }
-            }
-        }
-    }
 
     private val settingsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            overlayView.loadSettings()
-            setupPowerStrip()
+            when (intent?.action) {
+                "com.bezel.squeeze.UPDATE_SETTINGS" -> overlayView.loadSettings()
+                "com.bezel.squeeze.TRIGGER_TEST" -> overlayView.onButtonPress(isVolumeUp = true, isTest = true)
+                "com.bezel.squeeze.RELEASE_TEST" -> overlayView.onButtonRelease()
+            }
         }
     }
 
@@ -62,92 +54,44 @@ class BezelAccessibilityService : AccessibilityService() {
         }
 
         windowManager.addView(overlayView, params)
-        setupPowerStrip()
 
         val filter = IntentFilter().apply {
             addAction("com.bezel.squeeze.UPDATE_SETTINGS")
-            addAction("com.bezel.squeeze.TRIGGER_PREVIEW")
+            addAction("com.bezel.squeeze.TRIGGER_TEST")
+            addAction("com.bezel.squeeze.RELEASE_TEST")
         }
-        val screenFilter = IntentFilter(Intent.ACTION_SCREEN_OFF)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(settingsReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            registerReceiver(screenReceiver, screenFilter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(settingsReceiver, filter)
-            registerReceiver(screenReceiver, screenFilter)
         }
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupPowerStrip() {
-        val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
-        val powerEnabled = prefs.getBoolean("enable_power_button", true)
-        val isRight = prefs.getBoolean("power_is_right", true)
-        val powerY = prefs.getFloat("power_y", 1200f)
-        val powerLength = prefs.getFloat("power_length", 180f)
-
-        powerStripView?.let {
-            try { windowManager.removeView(it) } catch (_: Exception) {}
-            powerStripView = null
-        }
-
-        if (!powerEnabled) return
-
-        powerStripView = View(this).apply {
-            setOnTouchListener { _, event ->
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> overlayView.onPowerPress()
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> overlayView.onButtonRelease()
-                }
-                false
-            }
-        }
-
-        val stripWidth = (resources.displayMetrics.density * 32).toInt()
-        val stripParams = WindowManager.LayoutParams(
-            stripWidth,
-            powerLength.toInt().coerceAtLeast(40),
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = (if (isRight) Gravity.END else Gravity.START) or Gravity.TOP
-            y = (powerY - (powerLength / 2f)).toInt().coerceAtLeast(0)
-        }
-
-        try {
-            windowManager.addView(powerStripView, stripParams)
-        } catch (_: Exception) {}
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+        // Dynamic Key Learn Mode
+        if (isCapturingExtraKey && event.action == KeyEvent.ACTION_DOWN) {
+            onKeyCapturedCallback?.invoke(event.keyCode)
+            isCapturingExtraKey = false
             return false
         }
 
         val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
-        val latencyMs = prefs.getFloat("input_latency_ms", 0f).toLong()
-        val isUp = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        val extraKey1 = prefs.getInt("extra_key_code_1", -1)
+        val extraKey2 = prefs.getInt("extra_key_code_2", -1)
 
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            if (event.repeatCount == 0) {
-                isHoldingKey = true
-                if (latencyMs <= 0L) {
-                    overlayView.onButtonPress(isUp)
-                } else {
-                    mainHandler.postDelayed({ if (isHoldingKey) overlayView.onButtonPress(isUp) }, latencyMs)
-                }
-            }
+        val isVolUp = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        val isVolDown = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        val isExtra = event.keyCode == extraKey1 || event.keyCode == extraKey2
+
+        if (!isVolUp && !isVolDown && !isExtra) {
+            return false
+        }
+
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            overlayView.onButtonPress(isVolumeUp = isVolUp, isExtra = isExtra)
         } else if (event.action == KeyEvent.ACTION_UP) {
-            isHoldingKey = false
-            val delay = 50L.coerceAtLeast(latencyMs)
-            mainHandler.postDelayed({
-                if (!isHoldingKey) overlayView.onButtonRelease()
-            }, delay)
+            overlayView.onButtonRelease()
         }
         return false
     }
@@ -157,12 +101,8 @@ class BezelAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            unregisterReceiver(settingsReceiver)
-            unregisterReceiver(screenReceiver)
-        } catch (_: Exception) {}
+        try { unregisterReceiver(settingsReceiver) } catch (_: Exception) {}
         if (::overlayView.isInitialized) windowManager.removeView(overlayView)
-        powerStripView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
     }
 }
 
@@ -177,31 +117,32 @@ class BezelBulgeView(context: Context) : View(context) {
         }
 
     private var activeCenterY = 800f
-    private var activeLength = 260f
-    private var activePeakBias = 0.5f
-    private var isVolumeUpActive = true
+    private var activeLength = 340f
+    private var isVolUpPressed = true
+    private var isExtraPressed = false
 
     private var isRightEdge = true
     private var shapeProfile = 0
     private var unifiedRocker = true
-    private var baseBulgeDepth = 40f
-    private var springStiffness = 3400f
-    private var springDamping = 0.75f
+    private var baseBulgeDepth = 42f
+    private var pressDurationMs = 90L
+    private var releaseDurationMs = 180L
     private var bulgeColor = Color.BLACK
 
+    private var customScale = 1.0f
+    private var customRotation = 0f
+
     private val path = Path()
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val customStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 6f
     }
 
-    private val depthProperty = object : FloatPropertyCompat<BezelBulgeView>("depth") {
-        override fun getValue(view: BezelBulgeView): Float = view.currentDepth
-        override fun setValue(view: BezelBulgeView, value: Float) {
-            view.currentDepth = value
-        }
-    }
-
-    private val springAnim = SpringAnimation(this, depthProperty, 0f)
+    // Authentic iOS easing curve
+    private val iosEaseOut = PathInterpolator(0.2f, 0.0f, 0.0f, 1.0f)
+    private val iosEaseIn = PathInterpolator(0.3f, 0.0f, 0.8f, 0.15f)
+    private var activeAnimator: ValueAnimator? = null
 
     init {
         loadSettings()
@@ -211,55 +152,55 @@ class BezelBulgeView(context: Context) : View(context) {
         isRightEdge = prefs.getBoolean("is_right_side", true)
         unifiedRocker = prefs.getBoolean("unified_rocker", true)
         shapeProfile = prefs.getInt("shape_profile", 0)
-        baseBulgeDepth = prefs.getFloat("bulge_depth", 40f)
-        springStiffness = prefs.getFloat("speed_stiffness", 3400f)
-        springDamping = prefs.getFloat("bounce_damping", 0.75f)
+        baseBulgeDepth = prefs.getFloat("bulge_depth", 42f)
+        pressDurationMs = prefs.getFloat("press_speed_ms", 90f).toLong().coerceIn(20L, 500L)
+        releaseDurationMs = prefs.getFloat("release_speed_ms", 180f).toLong().coerceIn(40L, 800L)
         bulgeColor = prefs.getInt("bulge_color", Color.BLACK)
+        customScale = prefs.getFloat("custom_shape_scale", 1.0f)
+        customRotation = prefs.getFloat("custom_shape_rotation", 0f)
+
         paint.color = bulgeColor
+        customStrokePaint.color = prefs.getInt("custom_stroke_color", Color.WHITE)
         invalidate()
     }
 
-    fun onButtonPress(isVolumeUp: Boolean) {
+    fun onButtonPress(isVolumeUp: Boolean, isExtra: Boolean = false, isTest: Boolean = false) {
         loadSettings()
-        isVolumeUpActive = isVolumeUp
+        isVolUpPressed = isVolumeUp
+        isExtraPressed = isExtra
 
         val volUpY = prefs.getFloat("vol_up_y", 720f)
         val volDownY = prefs.getFloat("vol_down_y", 960f)
+        val extraY = prefs.getFloat("extra_btn_y", 500f)
 
-        if (unifiedRocker) {
+        if (isExtra) {
+            activeCenterY = extraY
+            activeLength = prefs.getFloat("extra_btn_length", 160f)
+        } else if (unifiedRocker) {
             activeCenterY = (volUpY + volDownY) / 2f
-            activeLength = prefs.getFloat("rocker_total_length", 360f)
-            activePeakBias = if (isVolumeUp) 0.25f else 0.75f
+            activeLength = prefs.getFloat("rocker_total_length", 380f)
         } else {
             activeCenterY = if (isVolumeUp) volUpY else volDownY
             activeLength = prefs.getFloat("single_btn_length", 160f)
-            activePeakBias = 0.5f
         }
 
-        animateTo(baseBulgeDepth)
-    }
-
-    fun onPowerPress() {
-        loadSettings()
-        isRightEdge = prefs.getBoolean("power_is_right", true)
-        activeCenterY = prefs.getFloat("power_y", 1200f)
-        activeLength = prefs.getFloat("power_length", 180f)
-        activePeakBias = 0.5f
-
-        animateTo(baseBulgeDepth)
+        activeAnimator?.cancel()
+        activeAnimator = ValueAnimator.ofFloat(currentDepth, baseBulgeDepth).apply {
+            duration = pressDurationMs
+            interpolator = iosEaseOut
+            addUpdateListener { currentDepth = it.animatedValue as Float }
+            start()
+        }
     }
 
     fun onButtonRelease() {
-        animateTo(0f)
-    }
-
-    private fun animateTo(target: Float) {
-        springAnim.cancel()
-        springAnim.spring = SpringForce(target).apply {
-            stiffness = springStiffness
-            dampingRatio = if (target == 0f) springDamping else 0.88f
+        activeAnimator?.cancel()
+        activeAnimator = ValueAnimator.ofFloat(currentDepth, 0f).apply {
+            duration = releaseDurationMs
+            interpolator = iosEaseIn
+            addUpdateListener { currentDepth = it.animatedValue as Float }
+            start()
         }
-        springAnim.start()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -274,68 +215,81 @@ class BezelBulgeView(context: Context) : View(context) {
         val edgeX = if (isRightEdge) width.toFloat() else 0f
         val peakX = if (isRightEdge) width - currentDepth else currentDepth
 
-        if (unifiedRocker) {
-            drawUnifiedMechanicalRocker(edgeX, peakX, startY, endY, isVolumeUpActive)
+        if (shapeProfile == 4) { // Custom Shape Mode
+            drawCustomRenderedShape(canvas, edgeX, activeCenterY)
+            return
+        }
+
+        if (unifiedRocker && !isExtraPressed) {
+            drawKinematicUnifiedRocker(edgeX, peakX, startY, endY, isVolUpPressed)
         } else {
             when (shapeProfile) {
-                0 -> drawPrecisionCurvedSquircle(edgeX, peakX, startY, endY)
+                0 -> drawIosSquircle(edgeX, peakX, startY, endY)
                 1 -> drawOrganicTeardrop(edgeX, peakX, startY, endY)
                 2 -> drawGeometricPill(edgeX, peakX, startY, endY)
                 3 -> drawBeveledWedge(edgeX, peakX, startY, endY)
-                4 -> drawParabolicArch(edgeX, peakX, startY, endY)
-                5 -> drawCustomInterpolatedShape(edgeX, peakX, startY, endY)
             }
         }
 
         canvas.drawPath(path, paint)
     }
 
-    private fun drawUnifiedMechanicalRocker(
+    /**
+     * Kinematic unified rocker: Anchors the stationary pivot end to the bezel edge 
+     * while swelling the pressed summit with dynamic curvature matching the physical toggle.
+     */
+    private fun drawKinematicUnifiedRocker(
         edgeX: Float,
         peakX: Float,
         startY: Float,
         endY: Float,
-        isUpPressed: Boolean
+        isUp: Boolean
     ) {
-        val rockerHeight = endY - startY
-        val crestTopY = startY + (rockerHeight * 0.22f)
-        val crestBottomY = startY + (rockerHeight * 0.78f)
+        val rockerH = endY - startY
+        val pressedApexY = if (isUp) startY + (rockerH * 0.22f) else endY - (rockerH * 0.22f)
+        val passiveApexY = if (isUp) endY - (rockerH * 0.22f) else startY + (rockerH * 0.22f)
 
-        val topPeakX = if (isUpPressed) peakX else edgeX + ((peakX - edgeX) * 0.30f)
-        val botPeakX = if (isUpPressed) edgeX + ((peakX - edgeX) * 0.30f) else peakX
+        val highX = peakX
+        val lowX = edgeX + ((peakX - edgeX) * 0.26f)
+
+        val topApexX = if (isUp) highX else lowX
+        val botApexX = if (isUp) lowX else highX
 
         path.moveTo(edgeX, startY)
+        // Top crest entry
         path.cubicTo(
-            edgeX, startY + (rockerHeight * 0.08f),
-            topPeakX, crestTopY - (rockerHeight * 0.06f),
-            topPeakX, crestTopY
+            edgeX, startY + (rockerH * 0.08f),
+            topApexX, pressedApexY - (rockerH * 0.08f),
+            topApexX, pressedApexY
         )
-        val saddleX = edgeX + ((peakX - edgeX) * 0.22f)
+        // Fluid rocker bridge saddle
+        val saddleX = edgeX + ((peakX - edgeX) * 0.18f)
         val midY = (startY + endY) / 2f
         path.cubicTo(
-            topPeakX, midY - (rockerHeight * 0.12f),
+            topApexX, midY - (rockerH * 0.12f),
             saddleX, midY,
-            botPeakX, crestBottomY - (rockerHeight * 0.12f)
+            botApexX, passiveApexY - (rockerH * 0.12f)
         )
+        // Bottom crest exit
         path.cubicTo(
-            botPeakX, crestBottomY + (rockerHeight * 0.06f),
-            edgeX, endY - (rockerHeight * 0.08f),
+            botApexX, passiveApexY + (rockerH * 0.08f),
+            edgeX, endY - (rockerH * 0.08f),
             edgeX, endY
         )
         path.close()
     }
 
-    private fun drawPrecisionCurvedSquircle(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
+    private fun drawIosSquircle(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
         val h = endY - startY
-        val flatHalf = h * 0.18f
+        val flatHalf = h * 0.16f
         val midY = (startY + endY) / 2f
         val flatTop = midY - flatHalf
         val flatBot = midY + flatHalf
 
         path.moveTo(edgeX, startY)
-        path.cubicTo(edgeX, startY + (h * 0.2f), peakX, flatTop - (h * 0.1f), peakX, flatTop)
+        path.cubicTo(edgeX, startY + (h * 0.22f), peakX, flatTop - (h * 0.08f), peakX, flatTop)
         path.lineTo(peakX, flatBot)
-        path.cubicTo(peakX, flatBot + (h * 0.1f), edgeX, endY - (h * 0.2f), edgeX, endY)
+        path.cubicTo(peakX, flatBot + (h * 0.08f), edgeX, endY - (h * 0.22f), edgeX, endY)
         path.close()
     }
 
@@ -343,8 +297,8 @@ class BezelBulgeView(context: Context) : View(context) {
         val midY = (startY + endY) / 2f
         val h = endY - startY
         path.moveTo(edgeX, startY)
-        path.cubicTo(edgeX, startY + (h * 0.35f), peakX, midY - (h * 0.2f), peakX, midY)
-        path.cubicTo(peakX, midY + (h * 0.2f), edgeX, endY - (h * 0.35f), edgeX, endY)
+        path.cubicTo(edgeX, startY + (h * 0.38f), peakX, midY - (h * 0.2f), peakX, midY)
+        path.cubicTo(peakX, midY + (h * 0.2f), edgeX, endY - (h * 0.38f), edgeX, endY)
         path.close()
     }
 
@@ -366,37 +320,48 @@ class BezelBulgeView(context: Context) : View(context) {
         path.close()
     }
 
-    private fun drawParabolicArch(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
-        path.moveTo(edgeX, startY)
-        path.cubicTo(peakX, startY, peakX, endY, edgeX, endY)
-        path.close()
-    }
+    private fun drawCustomRenderedShape(canvas: Canvas, edgeX: Float, centerY: Float) {
+        val customShapeType = prefs.getInt("custom_geometric_type", 0) // 0 = Circle, 1 = Rounded Squircle, 2 = Star/Badge
+        val shapeSize = (activeLength * 0.7f * customScale)
+        val progress = (currentDepth / baseBulgeDepth.coerceAtLeast(1f))
+        val currentBulgeOffset = progress * shapeSize * 0.85f
 
-    private fun drawCustomInterpolatedShape(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
-        val raw = prefs.getString("custom_points_data", null)
-        if (raw.isNullOrEmpty()) {
-            drawPrecisionCurvedSquircle(edgeX, peakX, startY, endY)
-            return
-        }
-        val pairs = raw.split(";").filter { it.contains(",") }
-        if (pairs.size < 3) {
-            drawPrecisionCurvedSquircle(edgeX, peakX, startY, endY)
-            return
-        }
+        val posX = if (isRightEdge) edgeX - currentBulgeOffset else edgeX + currentBulgeOffset
+        val posY = centerY
 
-        path.moveTo(edgeX, startY)
-        val h = endY - startY
-        val depthSign = if (isRightEdge) -1f else 1f
+        canvas.save()
+        canvas.translate(posX, posY)
+        canvas.rotate(if (isRightEdge) -customRotation else customRotation)
 
-        for (p in pairs) {
-            val parts = p.split(",")
-            val normY = parts[0].toFloatOrNull() ?: continue
-            val normDepth = parts[1].toFloatOrNull() ?: continue
-            val px = edgeX + (depthSign * normDepth * currentDepth)
-            val py = startY + (normY * h)
-            path.lineTo(px, py)
+        val half = shapeSize / 2f
+        val rect = RectF(-half, -half, half, half)
+
+        when (customShapeType) {
+            0 -> {
+                canvas.drawCircle(0f, 0f, half, paint)
+                canvas.drawCircle(0f, 0f, half, customStrokePaint)
+            }
+            1 -> {
+                canvas.drawRoundRect(rect, 36f, 36f, paint)
+                canvas.drawRoundRect(rect, 36f, 36f, customStrokePaint)
+            }
+            2 -> {
+                val starPath = Path().apply {
+                    val rOuter = half
+                    val rInner = half * 0.5f
+                    for (i in 0 until 10) {
+                        val angle = (i * Math.PI / 5).toFloat()
+                        val r = if (i % 2 == 0) rOuter else rInner
+                        val x = r * kotlin.math.cos(angle)
+                        val y = r * kotlin.math.sin(angle)
+                        if (i == 0) moveTo(x, y) else lineTo(x, y)
+                    }
+                    close()
+                }
+                canvas.drawPath(starPath, paint)
+                canvas.drawPath(starPath, customStrokePaint)
+            }
         }
-        path.lineTo(edgeX, endY)
-        path.close()
+        canvas.restore()
     }
 }
