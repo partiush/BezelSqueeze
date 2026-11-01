@@ -51,7 +51,6 @@ class BezelAccessibilityService : AccessibilityService() {
         bezelOverlay = BezelBulgeView(this)
         volumePanelOverlay = CustomVolumePanelView(this, audioManager)
 
-        // Add Bezel Bulge Layer
         val bezelParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -64,7 +63,6 @@ class BezelAccessibilityService : AccessibilityService() {
         ).apply { gravity = Gravity.TOP or Gravity.START }
         windowManager.addView(bezelOverlay, bezelParams)
 
-        // Add Volume Panel Layer (Touchable)
         val panelParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -110,16 +108,14 @@ class BezelAccessibilityService : AccessibilityService() {
             bezelOverlay.triggerPress(isVolumeUp = isVolUp, isExtra = isExtra)
 
             if (isVolUp || isVolDown) {
-                // Adjust hardware audio stream
-                val direction = if (isVolUp) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0)
+                val dir = if (isVolUp) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, 0)
                 mainHandler.post { volumePanelOverlay.showPanel() }
             }
         } else if (event.action == KeyEvent.ACTION_UP) {
             bezelOverlay.triggerRelease()
         }
 
-        // Return true on volume keys to suppress stock OS volume UI
         return isVolUp || isVolDown
     }
 
@@ -317,15 +313,22 @@ class CustomVolumePanelView(
     private var styleType = 0 // 0=iOS, 1=OneUI, 2=HyperOS, 3=ColorOS, 4=Pixel
     private var isRightSide = true
     private var panelY = 800f
+    private var baseWidth = 46f
     private var panelWidth = 46f
-    private var panelHeight = 210f
+    private var panelHeight = 220f
+    private var isTouching = false
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 28f
+        typeface = Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.FILL
-        strokeWidth = 3f
     }
 
     private val hideHandler = Handler(Looper.getMainLooper())
@@ -339,8 +342,15 @@ class CustomVolumePanelView(
         styleType = prefs.getInt("volume_panel_style", 0)
         isRightSide = prefs.getBoolean("is_right_edge", true)
         panelY = prefs.getFloat("vol_up_y", 720f) + 100f
-        panelWidth = prefs.getFloat("panel_width", 48f)
-        panelHeight = prefs.getFloat("panel_height", 220f)
+        baseWidth = when (styleType) {
+            0 -> 14f // iOS idle slim bar
+            1 -> 48f // OneUI pill
+            2 -> 44f // HyperOS capsule
+            3 -> 42f // ColorOS
+            else -> 56f // Pixel pill
+        }
+        panelWidth = baseWidth
+        panelHeight = 220f
     }
 
     fun showPanel() {
@@ -361,16 +371,19 @@ class CustomVolumePanelView(
             start()
         }
 
-        hideHandler.postDelayed(hideRunnable, 2400)
+        hideHandler.postDelayed(hideRunnable, 2200)
     }
 
     private fun fadeOut() {
         ValueAnimator.ofFloat(panelAlpha, 0f).apply {
-            duration = 220
+            duration = 200
             addUpdateListener {
                 panelAlpha = it.animatedValue as Float
                 invalidate()
-                if (panelAlpha <= 0.05f) isVisibleOnScreen = false
+                if (panelAlpha <= 0.05f) {
+                    isVisibleOnScreen = false
+                    panelWidth = baseWidth
+                }
             }
             start()
         }
@@ -381,23 +394,46 @@ class CustomVolumePanelView(
         if (!isVisibleOnScreen || panelAlpha < 0.2f) return false
 
         val margin = 28f
-        val left = if (isRightSide) width - panelWidth - margin else margin
-        val right = left + panelWidth
+        val currentW = if (isTouching && styleType == 0) 52f else panelWidth
+        val left = if (isRightSide) width - currentW - margin else margin
+        val right = left + currentW
         val top = panelY - (panelHeight / 2f)
         val bottom = top + panelHeight
 
-        if (event.x >= left - 40 && event.x <= right + 40 && event.y >= top - 20 && event.y <= bottom + 20) {
+        if (event.x >= left - 50 && event.x <= right + 50 && event.y >= top - 30 && event.y <= bottom + 30) {
             when (event.action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                MotionEvent.ACTION_DOWN -> {
+                    isTouching = true
                     hideHandler.removeCallbacks(hideRunnable)
-                    val raw = 1f - ((event.y - top) / panelHeight)
-                    volumeLevel = raw.coerceIn(0f, 1f)
-                    val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (volumeLevel * max).toInt(), 0)
-                    invalidate()
+                    if (styleType == 0) {
+                        ValueAnimator.ofFloat(panelWidth, 52f).apply {
+                            duration = 120
+                            addUpdateListener {
+                                panelWidth = it.animatedValue as Float
+                                invalidate()
+                            }
+                            start()
+                        }
+                    }
+                    updateVolumeFromTouch(event.y, top, bottom)
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    updateVolumeFromTouch(event.y, top, bottom)
                     return true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isTouching = false
+                    if (styleType == 0) {
+                        ValueAnimator.ofFloat(panelWidth, baseWidth).apply {
+                            duration = 160
+                            addUpdateListener {
+                                panelWidth = it.animatedValue as Float
+                                invalidate()
+                            }
+                            start()
+                        }
+                    }
                     hideHandler.postDelayed(hideRunnable, 2000)
                     return true
                 }
@@ -406,45 +442,54 @@ class CustomVolumePanelView(
         return false
     }
 
+    private fun updateVolumeFromTouch(touchY: Float, top: Float, bottom: Float) {
+        val raw = 1f - ((touchY - top) / panelHeight)
+        volumeLevel = raw.coerceIn(0f, 1f)
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (volumeLevel * max).toInt(), 0)
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (!isVisibleOnScreen || panelAlpha <= 0.01f) return
 
-        val margin = 32f
+        val margin = 28f
         val left = if (isRightSide) width - panelWidth - margin else margin
         val top = panelY - (panelHeight / 2f)
         val right = left + panelWidth
         val bottom = top + panelHeight
+
         val cornerRadius = when (styleType) {
-            0 -> 34f // iOS squircle pill
-            1 -> 24f // OneUI rounded
-            2 -> 42f // HyperOS capsule
-            3 -> 18f // ColorOS sharp-round
-            else -> 48f // Pixel thick pill
+            0 -> panelWidth / 2f // iOS squircle capsule
+            1 -> 24f // OneUI
+            2 -> 40f // HyperOS
+            3 -> 16f // ColorOS
+            else -> panelWidth / 2f // Pixel Material You
         }
 
         val baseAlpha = (panelAlpha * 255).toInt()
 
-        // 1. Panel Background
+        // 1. Background Shell
         when (styleType) {
-            0 -> bgPaint.color = Color.argb((0.45f * baseAlpha).toInt(), 40, 40, 42) // iOS Blur Base
-            1 -> bgPaint.color = Color.argb((0.75f * baseAlpha).toInt(), 30, 30, 33) // OneUI Base
-            2 -> bgPaint.color = Color.argb((0.65f * baseAlpha).toInt(), 28, 28, 30) // HyperOS
-            3 -> bgPaint.color = Color.argb((0.80f * baseAlpha).toInt(), 24, 24, 26) // ColorOS
-            else -> bgPaint.color = Color.argb((0.70f * baseAlpha).toInt(), 34, 34, 38) // Pixel
+            0 -> bgPaint.color = Color.argb((0.45f * baseAlpha).toInt(), 45, 45, 48) // iOS frosted
+            1 -> bgPaint.color = Color.argb((0.85f * baseAlpha).toInt(), 32, 33, 36) // OneUI dark
+            2 -> bgPaint.color = Color.argb((0.65f * baseAlpha).toInt(), 26, 26, 28) // HyperOS frosted
+            3 -> bgPaint.color = Color.argb((0.88f * baseAlpha).toInt(), 20, 20, 22) // ColorOS
+            else -> bgPaint.color = Color.argb((0.75f * baseAlpha).toInt(), 38, 40, 44) // Pixel
         }
         val bgRect = RectF(left, top, right, bottom)
         canvas.drawRoundRect(bgRect, cornerRadius, cornerRadius, bgPaint)
 
-        // 2. Panel Fill Track
+        // 2. Active Volume Fill
         val fillHeight = panelHeight * volumeLevel
         val fillTop = bottom - fillHeight
         when (styleType) {
-            0 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255) // iOS Pure White
-            1 -> fillPaint.color = Color.argb(baseAlpha, 68, 138, 255) // OneUI Accent Blue
-            2 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255) // HyperOS Clean White
-            3 -> fillPaint.color = Color.argb(baseAlpha, 0, 195, 137) // ColorOS Emerald
-            else -> fillPaint.color = Color.argb(baseAlpha, 168, 199, 250) // Pixel Pastel Blue
+            0 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255) // iOS solid white
+            1 -> fillPaint.color = Color.argb(baseAlpha, 68, 138, 255) // OneUI Samsung blue
+            2 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255) // HyperOS clean white
+            3 -> fillPaint.color = Color.argb(baseAlpha, 0, 195, 137) // ColorOS emerald
+            else -> fillPaint.color = Color.argb(baseAlpha, 168, 199, 250) // Pixel pastel
         }
 
         canvas.save()
@@ -452,11 +497,18 @@ class CustomVolumePanelView(
         canvas.drawRoundRect(bgRect, cornerRadius, cornerRadius, fillPaint)
         canvas.restore()
 
-        // 3. Audio Speaker Icon
-        val iconY = bottom - 28f
-        val iconX = left + (panelWidth / 2f)
+        // 3. Glyphs & Percentages
+        val centerX = left + (panelWidth / 2f)
+        if (styleType == 1) { // OneUI percentage
+            textPaint.alpha = baseAlpha
+            canvas.drawText("${(volumeLevel * 100).toInt()}%", centerX, top - 16f, textPaint)
+        }
+
+        // Speaker Glyph Indicator
         iconPaint.alpha = baseAlpha
-        iconPaint.color = if (volumeLevel > 0.2f && styleType == 0) Color.BLACK else Color.WHITE
-        canvas.drawCircle(iconX, iconY, 6f, iconPaint)
+        iconPaint.color = if (volumeLevel > 0.22f && (styleType == 0 || styleType == 2)) Color.BLACK else Color.WHITE
+        if (panelWidth >= 28f) {
+            canvas.drawCircle(centerX, bottom - 26f, 6f, iconPaint)
+        }
     }
 }
