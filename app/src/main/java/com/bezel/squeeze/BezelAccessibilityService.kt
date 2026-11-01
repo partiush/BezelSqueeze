@@ -119,7 +119,7 @@ class BezelBulgeView(context: Context) : View(context) {
     private var isVolumeUpActive = true
     private var isExtraButtonActive = false
 
-    private var shapeType = 0 // 0=Squircle, 1=Teardrop, 2=Pill, 3=Bevel, 4=Custom
+    private var shapeType = 0
     private var targetDepth = 40f
     private var bulgeColor = Color.BLACK
 
@@ -193,7 +193,6 @@ class BezelBulgeView(context: Context) : View(context) {
         val startY = activeCenterY - (activeLength / 2f)
         val endY = activeCenterY + (activeLength / 2f)
 
-        // Unified rocker shifts the focus toward the pressed half while keeping the overall bar continuous
         val focusCenterY = if (isUnifiedRocker && !isExtraButtonActive) {
             if (isVolumeUpActive) startY + (activeLength * 0.32f) else startY + (activeLength * 0.68f)
         } else {
@@ -205,7 +204,7 @@ class BezelBulgeView(context: Context) : View(context) {
             1 -> drawTeardrop(edgeX, peakX, startY, endY, focusCenterY)
             2 -> drawPill(edgeX, peakX, startY, endY, focusCenterY)
             3 -> drawBevel(edgeX, peakX, startY, endY, focusCenterY)
-            4 -> drawCustomUserContour(edgeX, peakX, startY, endY)
+            4 -> drawCustomUserContour(edgeX, startY, endY)
         }
 
         canvas.drawPath(path, paint)
@@ -246,30 +245,40 @@ class BezelBulgeView(context: Context) : View(context) {
         path.close()
     }
 
-    private fun drawCustomUserContour(edgeX: Float, peakX: Float, topY: Float, botY: Float) {
+    private fun drawCustomUserContour(edgeX: Float, topY: Float, botY: Float) {
         val raw = prefs.getString("custom_drawing_points", null)
         if (raw.isNullOrEmpty()) {
-            drawSquircle(edgeX, peakX, topY, botY, (topY + botY) / 2f)
-            return
-        }
-        val points = raw.split(";").filter { it.contains(",") }
-        if (points.size < 3) {
+            val peakX = if (isRightEdge) width - currentDepth else currentDepth
             drawSquircle(edgeX, peakX, topY, botY, (topY + botY) / 2f)
             return
         }
 
-        path.moveTo(edgeX, topY)
-        val h = botY - topY
+        val pairs = raw.split(";").filter { it.contains(",") }
+        if (pairs.size < 2) {
+            val peakX = if (isRightEdge) width - currentDepth else currentDepth
+            drawSquircle(edgeX, peakX, topY, botY, (topY + botY) / 2f)
+            return
+        }
+
+        val heightSpan = botY - topY
         val sign = if (isRightEdge) -1f else 1f
 
-        for (p in points) {
-            val coords = p.split(",")
-            val normY = coords[0].toFloatOrNull() ?: continue
-            val normDepth = coords[1].toFloatOrNull() ?: continue
-            val px = edgeX + (sign * normDepth * currentDepth)
-            val py = topY + (normY * h)
+        path.moveTo(edgeX, topY)
+
+        val firstPt = pairs.first().split(",")
+        val firstY = topY + ((firstPt[0].toFloatOrNull() ?: 0f) * heightSpan)
+        val firstX = edgeX + (sign * (firstPt[1].toFloatOrNull() ?: 0f) * currentDepth)
+        path.lineTo(firstX, firstY)
+
+        for (i in 1 until pairs.size) {
+            val curr = pairs[i].split(",")
+            val ny = curr[0].toFloatOrNull() ?: continue
+            val nx = curr[1].toFloatOrNull() ?: continue
+            val px = edgeX + (sign * nx * currentDepth)
+            val py = topY + (ny * heightSpan)
             path.lineTo(px, py)
         }
+
         path.lineTo(edgeX, botY)
         path.close()
     }
