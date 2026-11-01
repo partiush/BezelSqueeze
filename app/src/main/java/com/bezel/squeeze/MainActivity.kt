@@ -176,7 +176,6 @@ class MainActivity : AppCompatActivity() {
             container.addView(spinner)
             container.addView(customDrawBtn)
 
-            // Color Selector
             val colRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -328,7 +327,8 @@ class MainActivity : AppCompatActivity() {
         onChanged: () -> Unit
     ) {
         val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
-        val currentVal = prefs.getFloat(key, def).coerceIn(min, max)
+        val raw = prefs.getFloat(key, def)
+        val validVal = (min + Math.round((raw - min) / step) * step).coerceIn(min, max)
 
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -336,7 +336,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val titleTv = TextView(this).apply {
-            text = "$label: ${currentVal.toInt()} $unit"
+            text = "$label: ${validVal.toInt()} $unit"
             textSize = 14f
             setTextColor(0xFFCCCCCC.toInt())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -355,7 +355,7 @@ class MainActivity : AppCompatActivity() {
             valueFrom = min
             valueTo = max
             stepSize = step
-            value = currentVal
+            value = validVal
             setLabelFormatter { "${it.toInt()} $unit" }
         }
 
@@ -374,10 +374,10 @@ class MainActivity : AppCompatActivity() {
                 .setView(textInputLayout)
                 .setPositiveButton("Save") { _, _ ->
                     input.text.toString().toFloatOrNull()?.let { entered ->
-                        val clamped = entered.coerceIn(min, max)
-                        slider.value = clamped
-                        prefs.edit().putFloat(key, clamped).apply()
-                        titleTv.text = "$label: ${clamped.toInt()} $unit"
+                        val snapped = (min + Math.round((entered - min) / step) * step).coerceIn(min, max)
+                        slider.value = snapped
+                        prefs.edit().putFloat(key, snapped).apply()
+                        titleTv.text = "$label: ${snapped.toInt()} $unit"
                         onChanged()
                     }
                 }
