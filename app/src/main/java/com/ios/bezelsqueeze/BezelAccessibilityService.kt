@@ -62,7 +62,6 @@ class BezelAccessibilityService : AccessibilityService() {
         } else if (event.action == KeyEvent.ACTION_UP) {
             overlayView.releaseBulge()
         }
-        // Return false so Android still changes the system volume normally
         return false
     }
 
@@ -126,7 +125,6 @@ class BezelBulgeView(context: Context) : View(context) {
         val edgeX = if (isRight) width.toFloat() else 0f
         val peakX = if (isRight) width - currentDepth else currentDepth
 
-        // Smooth iOS-style S-curve Cubic Bezier bulge
         path.moveTo(edgeX, startY)
         path.cubicTo(
             edgeX, startY + halfL * 0.45f,
