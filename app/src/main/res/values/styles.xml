@@ -1,15 +1,7 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="colorPrimary">#0A84FF</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSurface">#161618</item>
-        <item name="colorOnSurface">#FFFFFF</item>
-        <item name="colorSurfaceVariant">#242426</item>
-        <item name="colorOnSurfaceVariant">#CCCCCC</item>
-        <item name="colorOutline">#3A3A3C</item>
-        <item name="android:colorBackground">#121212</item>
-        <item name="android:statusBarColor">#121212</item>
-        <item name="android:navigationBarColor">#121212</item>
+    <style name="Theme.BezelSqueeze" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <item name="colorPrimary">#6200EE</item>
+        <item name="colorPrimaryDark">#3700B3</item>
+        <item name="colorAccent">#03DAC5</item>
     </style>
 </resources>
