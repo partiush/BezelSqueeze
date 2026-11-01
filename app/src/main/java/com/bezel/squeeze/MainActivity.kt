@@ -9,6 +9,7 @@ import android.graphics.*
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
+import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -50,6 +51,8 @@ class MainActivity : AppCompatActivity() {
         val btnPickColor: MaterialButton = findViewById(R.id.btnPickColor)
         val switchRightEdge: MaterialSwitch = findViewById(R.id.switchRightEdge)
         val switchUnified: MaterialSwitch = findViewById(R.id.switchUnified)
+        val switchHaptics: MaterialSwitch = findViewById(R.id.switchHaptics)
+        val btnAutoCalibrate: MaterialButton = findViewById(R.id.btnAutoCalibrate)
         val boxSlidersContainer: LinearLayout = findViewById(R.id.boxSlidersContainer)
 
         val tvExtraKeyStatus: TextView = findViewById(R.id.tvExtraKeyStatus)
@@ -79,7 +82,6 @@ class MainActivity : AppCompatActivity() {
             sendBroadcast(Intent("com.bezel.squeeze.TEST_PANEL").setPackage(packageName))
         }
 
-        // Volume Panel Styles Spinner
         val panels = arrayOf("iOS Dynamic Panel", "Samsung OneUI", "Xiaomi HyperOS", "OPPO ColorOS", "Google Pixel")
         spinnerPanelStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, panels)
         spinnerPanelStyle.setSelection(prefs.getInt("volume_panel_style", 0))
@@ -91,7 +93,6 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(p0: AdapterView<*>?) {}
         }
 
-        // Shape Spinner
         val shapes = arrayOf("Smooth Squircle", "Organic Teardrop", "Geometric Pill", "Beveled Wedge", "Freehand Drawn Curve")
         spinnerShape.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, shapes)
         spinnerShape.setSelection(prefs.getInt("shape_type", 0))
@@ -109,7 +110,6 @@ class MainActivity : AppCompatActivity() {
             showDrawingDialog(::notifyEngine)
         }
 
-        // Color Picker
         colorPreview.setBackgroundColor(prefs.getInt("bulge_color", Color.BLACK))
         btnPickColor.setOnClickListener {
             showColorDialog { col ->
@@ -119,7 +119,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Switches
         switchRightEdge.isChecked = prefs.getBoolean("is_right_edge", true)
         switchRightEdge.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("is_right_edge", isChecked).apply()
@@ -132,99 +131,124 @@ class MainActivity : AppCompatActivity() {
             notifyEngine()
         }
 
-        // Universal Uncapped Fine-Tuning Sliders with Steppers & Direct Input
-        fun addUncappedSlider(label: String, key: String, defVal: Float, step: Float, unit: String) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, 8, 0, 8)
-            }
-            val titleRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            val currentVal = prefs.getFloat(key, defVal)
-            val titleTv = TextView(this).apply {
-                text = "$label: ${currentVal.toInt()} $unit"
-                textSize = 14f
-                setTextColor(0xFFCCCCCC.toInt())
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }
-            val editBtn = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
-                text = "Edit"
-                textSize = 12f
-            }
-            titleRow.addView(titleTv)
-            titleRow.addView(editBtn)
-            row.addView(titleRow)
-
-            val slider = Slider(this).apply {
-                valueFrom = (currentVal * 0.2f).coerceAtLeast(0f)
-                valueTo = (currentVal * 2.5f).coerceAtLeast(100f)
-                stepSize = step
-                value = currentVal.coerceIn(valueFrom, valueTo)
-                setLabelFormatter { "${it.toInt()} $unit" }
-            }
-
-            fun updateValue(newVal: Float) {
-                val clamped = newVal.coerceAtLeast(0f)
-                prefs.edit().putFloat(key, clamped).apply()
-                titleTv.text = "$label: ${clamped.toInt()} $unit"
-                if (clamped in slider.valueFrom..slider.valueTo) slider.value = clamped
-                notifyEngine()
-            }
-
-            editBtn.setOnClickListener {
-                val textLayout = TextInputLayout(this).apply { setPadding(40, 16, 40, 0) }
-                val input = TextInputEditText(textLayout.context).apply {
-                    inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                    setText(prefs.getFloat(key, defVal).toInt().toString())
-                }
-                textLayout.addView(input)
-                MaterialAlertDialogBuilder(this)
-                    .setTitle("Set $label")
-                    .setView(textLayout)
-                    .setPositiveButton("Save") { _, _ ->
-                        input.text.toString().toFloatOrNull()?.let { updateValue(it) }
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            }
-
-            slider.addOnChangeListener { _, value, fromUser ->
-                if (fromUser) updateValue(value)
-            }
-
-            // Stepper Buttons row
-            val stepRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            val minusBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                text = "-$step"
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                setOnClickListener { updateValue(prefs.getFloat(key, defVal) - step) }
-            }
-            val plusBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                text = "+$step"
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                setOnClickListener { updateValue(prefs.getFloat(key, defVal) + step) }
-            }
-            stepRow.addView(minusBtn)
-            stepRow.addView(plusBtn)
-
-            row.addView(slider)
-            row.addView(stepRow)
-            boxSlidersContainer.addView(row)
+        switchHaptics.isChecked = prefs.getBoolean("enable_haptics", true)
+        switchHaptics.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("enable_haptics", isChecked).apply()
         }
 
-        addUncappedSlider("Volume Up Height", "vol_up_y", 720f, 10f, "px")
-        addUncappedSlider("Volume Down Height", "vol_down_y", 960f, 10f, "px")
-        addUncappedSlider("Rocker Total Length", "rocker_length", 380f, 10f, "px")
-        addUncappedSlider("Separate Button Length", "single_btn_length", 160f, 10f, "px")
-        addUncappedSlider("Bulge Push Depth", "bulge_depth", 42f, 2f, "px")
-        addUncappedSlider("Inward Speed", "press_speed_ms", 75f, 5f, "ms")
+        fun populateSliders() {
+            boxSlidersContainer.removeAllViews()
+            fun addUncappedSlider(label: String, key: String, defVal: Float, step: Float, unit: String) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, 10, 0, 10)
+                }
+                val titleRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                val currentVal = prefs.getFloat(key, defVal)
+                val titleTv = TextView(this).apply {
+                    text = "$label: ${currentVal.toInt()} $unit"
+                    textSize = 14f
+                    setTextColor(0xFFCCCCCC.toInt())
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                val editBtn = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+                    text = "Edit"
+                    textSize = 12f
+                }
+                titleRow.addView(titleTv)
+                titleRow.addView(editBtn)
+                row.addView(titleRow)
 
-        // Extra Button Configuration
+                val slider = Slider(this).apply {
+                    valueFrom = (currentVal * 0.2f).coerceAtLeast(0f)
+                    valueTo = (currentVal * 2.5f).coerceAtLeast(100f)
+                    stepSize = step
+                    value = currentVal.coerceIn(valueFrom, valueTo)
+                    setLabelFormatter { "${it.toInt()} $unit" }
+                }
+
+                fun updateValue(newVal: Float) {
+                    val clamped = newVal.coerceAtLeast(0f)
+                    prefs.edit().putFloat(key, clamped).apply()
+                    titleTv.text = "$label: ${clamped.toInt()} $unit"
+                    if (clamped in slider.valueFrom..slider.valueTo) slider.value = clamped
+                    notifyEngine()
+                }
+
+                editBtn.setOnClickListener {
+                    val textLayout = TextInputLayout(this).apply { setPadding(40, 16, 40, 0) }
+                    val input = TextInputEditText(textLayout.context).apply {
+                        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                        setText(prefs.getFloat(key, defVal).toInt().toString())
+                    }
+                    textLayout.addView(input)
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle("Set $label")
+                        .setView(textLayout)
+                        .setPositiveButton("Save") { _, _ ->
+                            input.text.toString().toFloatOrNull()?.let { updateValue(it) }
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                }
+
+                slider.addOnChangeListener { _, value, fromUser ->
+                    if (fromUser) updateValue(value)
+                }
+
+                val stepRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                val minusBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = "-$step"
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    setOnClickListener { updateValue(prefs.getFloat(key, defVal) - step) }
+                }
+                val plusBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = "+$step"
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    setOnClickListener { updateValue(prefs.getFloat(key, defVal) + step) }
+                }
+                stepRow.addView(minusBtn)
+                stepRow.addView(plusBtn)
+
+                row.addView(slider)
+                row.addView(stepRow)
+                boxSlidersContainer.addView(row)
+            }
+
+            addUncappedSlider("Volume Up Height", "vol_up_y", 720f, 10f, "px")
+            addUncappedSlider("Volume Down Height", "vol_down_y", 960f, 10f, "px")
+            addUncappedSlider("Rocker Total Length", "rocker_length", 380f, 10f, "px")
+            addUncappedSlider("Separate Button Length", "single_btn_length", 160f, 10f, "px")
+            addUncappedSlider("Bulge Push Depth", "bulge_depth", 42f, 2f, "px")
+            addUncappedSlider("Inward Speed", "press_speed_ms", 75f, 5f, "ms")
+            addUncappedSlider("Release Bounce Speed", "release_speed_ms", 180f, 10f, "ms")
+        }
+
+        populateSliders()
+
+        btnAutoCalibrate.setOnClickListener {
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(dm)
+            val screenH = dm.heightPixels.toFloat()
+            prefs.edit()
+                .putFloat("vol_up_y", screenH * 0.28f)
+                .putFloat("vol_down_y", screenH * 0.38f)
+                .putFloat("rocker_length", screenH * 0.16f)
+                .putFloat("single_btn_length", screenH * 0.07f)
+                .putFloat("bulge_depth", 44f)
+                .apply()
+            populateSliders()
+            notifyEngine()
+            Toast.makeText(this, "Auto-calibrated to screen height: ${screenH.toInt()}px", Toast.LENGTH_SHORT).show()
+        }
+
         fun refreshExtraKeyUi() {
             val code = prefs.getInt("extra_button_code", -1)
             val name = prefs.getString("extra_button_name", "Hardware Button")
