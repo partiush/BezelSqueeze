@@ -1,4 +1,4 @@
-package com.ios.bezelsqueeze
+package com.bezel.squeeze
 
 import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
@@ -22,7 +22,19 @@ class BezelAccessibilityService : AccessibilityService() {
     private lateinit var overlayView: BezelBulgeView
     private var powerStripView: View? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var isHolding = false
+    private var isHoldingKey = false
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
+                if (prefs.getBoolean("enable_power_button", true)) {
+                    overlayView.onPowerPress()
+                    mainHandler.postDelayed({ overlayView.onButtonRelease() }, 200)
+                }
+            }
+        }
+    }
 
     private val settingsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -52,11 +64,18 @@ class BezelAccessibilityService : AccessibilityService() {
         windowManager.addView(overlayView, params)
         setupPowerStrip()
 
-        val filter = IntentFilter("com.ios.bezelsqueeze.UPDATE_SETTINGS")
+        val filter = IntentFilter().apply {
+            addAction("com.bezel.squeeze.UPDATE_SETTINGS")
+            addAction("com.bezel.squeeze.TRIGGER_PREVIEW")
+        }
+        val screenFilter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(settingsReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(screenReceiver, screenFilter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(settingsReceiver, filter)
+            registerReceiver(screenReceiver, screenFilter)
         }
     }
 
@@ -68,8 +87,8 @@ class BezelAccessibilityService : AccessibilityService() {
         val powerY = prefs.getFloat("power_y", 1200f)
         val powerLength = prefs.getFloat("power_length", 180f)
 
-        if (powerStripView != null) {
-            try { windowManager.removeView(powerStripView) } catch (_: Exception) {}
+        powerStripView?.let {
+            try { windowManager.removeView(it) } catch (_: Exception) {}
             powerStripView = null
         }
 
@@ -85,10 +104,10 @@ class BezelAccessibilityService : AccessibilityService() {
             }
         }
 
-        val stripWidth = (resources.displayMetrics.density * 24).toInt()
+        val stripWidth = (resources.displayMetrics.density * 32).toInt()
         val stripParams = WindowManager.LayoutParams(
             stripWidth,
-            powerLength.toInt(),
+            powerLength.toInt().coerceAtLeast(40),
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -96,7 +115,7 @@ class BezelAccessibilityService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = (if (isRight) Gravity.END else Gravity.START) or Gravity.TOP
-            y = (powerY - (powerLength / 2f)).toInt()
+            y = (powerY - (powerLength / 2f)).toInt().coerceAtLeast(0)
         }
 
         try {
@@ -109,21 +128,24 @@ class BezelAccessibilityService : AccessibilityService() {
             return false
         }
 
+        val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
+        val latencyMs = prefs.getFloat("input_latency_ms", 0f).toLong()
         val isUp = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
 
         if (event.action == KeyEvent.ACTION_DOWN) {
             if (event.repeatCount == 0) {
-                isHolding = true
-                overlayView.onButtonPress(isVolumeUp = isUp)
+                isHoldingKey = true
+                if (latencyMs <= 0L) {
+                    overlayView.onButtonPress(isUp)
+                } else {
+                    mainHandler.postDelayed({ if (isHoldingKey) overlayView.onButtonPress(isUp) }, latencyMs)
+                }
             }
         } else if (event.action == KeyEvent.ACTION_UP) {
-            isHolding = false
-            // Minimum dwell timer: Guarantees snappy full visual registration even on a 10ms quick-tap
+            isHoldingKey = false
             mainHandler.postDelayed({
-                if (!isHolding) {
-                    overlayView.onButtonRelease()
-                }
-            }, 60)
+                if (!isHoldingKey) overlayView.onButtonRelease()
+            }, 50.coerceAtLeast(latencyMs))
         }
         return false
     }
@@ -133,7 +155,10 @@ class BezelAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(settingsReceiver) } catch (_: Exception) {}
+        try {
+            unregisterReceiver(settingsReceiver)
+            unregisterReceiver(screenReceiver)
+        } catch (_: Exception) {}
         if (::overlayView.isInitialized) windowManager.removeView(overlayView)
         powerStripView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
     }
@@ -152,17 +177,18 @@ class BezelBulgeView(context: Context) : View(context) {
     private var activeCenterY = 800f
     private var activeLength = 260f
     private var activePeakBias = 0.5f
+    private var isVolumeUpActive = true
 
     private var isRightEdge = true
     private var shapeProfile = 0
     private var unifiedRocker = true
     private var baseBulgeDepth = 40f
-    private var springStiffness = 3200f
+    private var springStiffness = 3400f
     private var springDamping = 0.75f
+    private var bulgeColor = Color.BLACK
 
     private val path = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
         style = Paint.Style.FILL
     }
 
@@ -184,22 +210,27 @@ class BezelBulgeView(context: Context) : View(context) {
         unifiedRocker = prefs.getBoolean("unified_rocker", true)
         shapeProfile = prefs.getInt("shape_profile", 0)
         baseBulgeDepth = prefs.getFloat("bulge_depth", 40f)
-        springStiffness = prefs.getFloat("speed_stiffness", 3200f)
+        springStiffness = prefs.getFloat("speed_stiffness", 3400f)
         springDamping = prefs.getFloat("bounce_damping", 0.75f)
+        bulgeColor = prefs.getInt("bulge_color", Color.BLACK)
+        paint.color = bulgeColor
+        invalidate()
     }
 
     fun onButtonPress(isVolumeUp: Boolean) {
         loadSettings()
+        isVolumeUpActive = isVolumeUp
+
         val volUpY = prefs.getFloat("vol_up_y", 720f)
-        val volDownY = prefs.getFloat("vol_down_y", 920f)
+        val volDownY = prefs.getFloat("vol_down_y", 960f)
 
         if (unifiedRocker) {
             activeCenterY = (volUpY + volDownY) / 2f
-            activeLength = prefs.getFloat("rocker_total_length", 320f)
-            activePeakBias = if (isVolumeUp) 0.32f else 0.68f
+            activeLength = prefs.getFloat("rocker_total_length", 360f)
+            activePeakBias = if (isVolumeUp) 0.25f else 0.75f
         } else {
             activeCenterY = if (isVolumeUp) volUpY else volDownY
-            activeLength = prefs.getFloat("single_btn_length", 150f)
+            activeLength = prefs.getFloat("single_btn_length", 160f)
             activePeakBias = 0.5f
         }
 
@@ -224,133 +255,154 @@ class BezelBulgeView(context: Context) : View(context) {
         springAnim.cancel()
         springAnim.spring = SpringForce(target).apply {
             stiffness = springStiffness
-            dampingRatio = if (target == 0f) springDamping else 0.85f
+            dampingRatio = if (target == 0f) springDamping else 0.88f
         }
         springAnim.start()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (currentDepth <= 0.2f) return
+        if (currentDepth <= 0.1f) return
 
         path.reset()
         val totalLength = activeLength
-        val startY = activeCenterY - (totalLength * activePeakBias)
-        val endY = activeCenterY + (totalLength * (1f - activePeakBias))
-        val peakY = activeCenterY - (totalLength * (0.5f - activePeakBias) * 0.65f)
+        val startY = activeCenterY - (totalLength / 2f)
+        val endY = activeCenterY + (totalLength / 2f)
 
         val edgeX = if (isRightEdge) width.toFloat() else 0f
         val peakX = if (isRightEdge) width - currentDepth else currentDepth
 
-        when (shapeProfile) {
-            0 -> drawIosSquircle(edgeX, peakX, startY, endY, peakY)
-            1 -> drawOrganicCurve(edgeX, peakX, startY, endY, peakY)
-            2 -> drawOvalCurve(edgeX, peakX, startY, endY, peakY)
-            3 -> drawSharpBevel(edgeX, peakX, startY, endY, peakY)
-            4 -> drawParabolicCrescent(edgeX, peakX, startY, endY, peakY)
-            5 -> drawLiquidSlime(edgeX, peakX, startY, endY, peakY)
-            6 -> drawCustomUserShape(edgeX, peakX, startY, endY)
+        if (unifiedRocker) {
+            drawUnifiedMechanicalRocker(edgeX, peakX, startY, endY, isVolumeUpActive)
+        } else {
+            when (shapeProfile) {
+                0 -> drawPrecisionCurvedSquircle(edgeX, peakX, startY, endY)
+                1 -> drawOrganicTeardrop(edgeX, peakX, startY, endY)
+                2 -> drawGeometricPill(edgeX, peakX, startY, endY)
+                3 -> drawBeveledWedge(edgeX, peakX, startY, endY)
+                4 -> drawParabolicArch(edgeX, peakX, startY, endY)
+                5 -> drawCustomInterpolatedShape(edgeX, peakX, startY, endY)
+            }
         }
 
         canvas.drawPath(path, paint)
     }
 
-    // 0: iOS 18 Squircle with low-curvature tangent blending & flat crown
-    private fun drawIosSquircle(edgeX: Float, peakX: Float, topY: Float, botY: Float, peakY: Float) {
-        val flatHalfWidth = activeLength * 0.16f
-        val flatTopY = peakY - flatHalfWidth
-        val flatBotY = peakY + flatHalfWidth
+    /**
+     * Dual-apex mechanical continuous rocker bar:
+     * Maintains a smooth uninterrupted baseline while raising the pressed pivot end.
+     */
+    private fun drawUnifiedMechanicalRocker(
+        edgeX: Float,
+        peakX: Float,
+        startY: Float,
+        endY: Float,
+        isUpPressed: Boolean
+    ) {
+        val rockerHeight = endY - startY
+        val crestTopY = startY + (rockerHeight * 0.22f)
+        val crestBottomY = startY + (rockerHeight * 0.78f)
 
-        path.moveTo(edgeX, topY)
+        // Pressed crest reaches full depth; passive crest maintains subtle base engagement (30%)
+        val topPeakX = if (isUpPressed) peakX else edgeX + ((peakX - edgeX) * 0.30f)
+        val botPeakX = if (isUpPressed) edgeX + ((peakX - edgeX) * 0.30f) else peakX
+
+        path.moveTo(edgeX, startY)
+        // Upper lead-in
         path.cubicTo(
-            edgeX, topY + (flatTopY - topY) * 0.62f,
-            peakX, flatTopY - (flatTopY - topY) * 0.22f,
-            peakX, flatTopY
+            edgeX, startY + (rockerHeight * 0.08f),
+            topPeakX, crestTopY - (rockerHeight * 0.06f),
+            topPeakX, crestTopY
         )
-        path.lineTo(peakX, flatBotY)
+        // Saddle depression connecting both rockers
+        val saddleX = edgeX + ((peakX - edgeX) * 0.22f)
+        val midY = (startY + endY) / 2f
         path.cubicTo(
-            peakX, flatBotY + (botY - flatBotY) * 0.22f,
-            edgeX, botY - (botY - flatBotY) * 0.62f,
-            edgeX, botY
+            topPeakX, midY - (rockerHeight * 0.12f),
+            saddleX, midY,
+            botPeakX, crestBottomY - (rockerHeight * 0.12f)
         )
-        path.close()
-    }
-
-    // 1: Organic Natural Teardrop
-    private fun drawOrganicCurve(edgeX: Float, peakX: Float, topY: Float, botY: Float, peakY: Float) {
-        path.moveTo(edgeX, topY)
+        // Lower crest & return to frame
         path.cubicTo(
-            edgeX, topY + (peakY - topY) * 0.5f,
-            peakX, peakY - (peakY - topY) * 0.35f,
-            peakX, peakY
-        )
-        path.cubicTo(
-            peakX, peakY + (botY - peakY) * 0.35f,
-            edgeX, botY - (botY - peakY) * 0.5f,
-            edgeX, botY
+            botPeakX, crestBottomY + (rockerHeight * 0.06f),
+            edgeX, endY - (rockerHeight * 0.08f),
+            edgeX, endY
         )
         path.close()
     }
 
-    // 2: Oval / Pill
-    private fun drawOvalCurve(edgeX: Float, peakX: Float, topY: Float, botY: Float, peakY: Float) {
-        path.moveTo(edgeX, topY)
-        path.quadTo(peakX, (topY + peakY) / 2f, peakX, peakY)
-        path.quadTo(peakX, (botY + peakY) / 2f, edgeX, botY)
+    private fun drawPrecisionCurvedSquircle(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
+        val h = endY - startY
+        val flatHalf = h * 0.18f
+        val midY = (startY + endY) / 2f
+        val flatTop = midY - flatHalf
+        val flatBot = midY + flatHalf
+
+        path.moveTo(edgeX, startY)
+        path.cubicTo(edgeX, startY + (h * 0.2f), peakX, flatTop - (h * 0.1f), peakX, flatTop)
+        path.lineTo(peakX, flatBot)
+        path.cubicTo(peakX, flatBot + (h * 0.1f), edgeX, endY - (h * 0.2f), edgeX, endY)
         path.close()
     }
 
-    // 3: Sharp Bevel
-    private fun drawSharpBevel(edgeX: Float, peakX: Float, topY: Float, botY: Float, peakY: Float) {
-        path.moveTo(edgeX, topY)
-        path.lineTo(peakX, peakY - (activeLength * 0.1f))
-        path.lineTo(peakX, peakY + (activeLength * 0.1f))
-        path.lineTo(edgeX, botY)
+    private fun drawOrganicTeardrop(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
+        val midY = (startY + endY) / 2f
+        val h = endY - startY
+        path.moveTo(edgeX, startY)
+        path.cubicTo(edgeX, startY + (h * 0.35f), peakX, midY - (h * 0.2f), peakX, midY)
+        path.cubicTo(peakX, midY + (h * 0.2f), edgeX, endY - (h * 0.35f), edgeX, endY)
         path.close()
     }
 
-    // 4: Parabolic Crescent
-    private fun drawParabolicCrescent(edgeX: Float, peakX: Float, topY: Float, botY: Float, peakY: Float) {
-        path.moveTo(edgeX, topY)
-        path.cubicTo(peakX, topY, peakX, botY, edgeX, botY)
+    private fun drawGeometricPill(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
+        val midY = (startY + endY) / 2f
+        path.moveTo(edgeX, startY)
+        path.quadTo(peakX, (startY + midY) / 2f, peakX, midY)
+        path.quadTo(peakX, (endY + midY) / 2f, edgeX, endY)
         path.close()
     }
 
-    // 5: Liquid Slime (Bulbous inflection)
-    private fun drawLiquidSlime(edgeX: Float, peakX: Float, topY: Float, botY: Float, peakY: Float) {
-        val waistX = edgeX + (peakX - edgeX) * 0.15f
-        path.moveTo(edgeX, topY)
-        path.quadTo(waistX, topY + (peakY - topY) * 0.3f, peakX, peakY)
-        path.quadTo(waistX, botY - (botY - peakY) * 0.3f, edgeX, botY)
+    private fun drawBeveledWedge(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
+        val midY = (startY + endY) / 2f
+        val plateau = (endY - startY) * 0.12f
+        path.moveTo(edgeX, startY)
+        path.lineTo(peakX, midY - plateau)
+        path.lineTo(peakX, midY + plateau)
+        path.lineTo(edgeX, endY)
         path.close()
     }
 
-    // 6: Custom Shape from User-Drawn Points
-    private fun drawCustomUserShape(edgeX: Float, peakX: Float, topY: Float, botY: Float) {
+    private fun drawParabolicArch(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
+        path.moveTo(edgeX, startY)
+        path.cubicTo(peakX, startY, peakX, endY, edgeX, endY)
+        path.close()
+    }
+
+    private fun drawCustomInterpolatedShape(edgeX: Float, peakX: Float, startY: Float, endY: Float) {
         val raw = prefs.getString("custom_points_data", null)
         if (raw.isNullOrEmpty()) {
-            drawIosSquircle(edgeX, peakX, topY, botY, (topY + botY) / 2f)
+            drawPrecisionCurvedSquircle(edgeX, peakX, startY, endY)
             return
         }
         val pairs = raw.split(";").filter { it.contains(",") }
         if (pairs.size < 3) {
-            drawIosSquircle(edgeX, peakX, topY, botY, (topY + botY) / 2f)
+            drawPrecisionCurvedSquircle(edgeX, peakX, startY, endY)
             return
         }
 
-        path.moveTo(edgeX, topY)
-        val h = botY - topY
+        path.moveTo(edgeX, startY)
+        val h = endY - startY
         val depthSign = if (isRightEdge) -1f else 1f
 
         for (p in pairs) {
             val parts = p.split(",")
-            val normY = parts[0].toFloatOrNull() ?: continue // 0.0 to 1.0
-            val normDepth = parts[1].toFloatOrNull() ?: continue // 0.0 to 1.0
+            val normY = parts[0].toFloatOrNull() ?: continue
+            val normDepth = parts[1].toFloatOrNull() ?: continue
             val px = edgeX + (depthSign * normDepth * currentDepth)
-            val py = topY + (normY * h)
+            val py = startY + (normY * h)
             path.lineTo(px, py)
         }
-        path.lineTo(edgeX, botY)
+        path.lineTo(edgeX, endY)
         path.close()
     }
 }
