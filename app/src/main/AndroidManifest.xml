@@ -6,7 +6,7 @@
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher_foreground"
-        android:label="iOS Bezel Squeeze"
+        android:label="Bezel Squeeze Pro"
         android:theme="@style/Theme.Material3.Dark.NoActionBar">
 
         <activity
@@ -21,7 +21,7 @@
         <service
             android:name=".BezelAccessibilityService"
             android:exported="true"
-            android:label="iOS Bezel Squeeze Engine"
+            android:label="Bezel Hardware Engine"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
