@@ -231,14 +231,14 @@ class MainActivity : AppCompatActivity() {
 
         val title = TextView(this).apply {
             text = "Draw Your Custom Bezel Curve"
-            textSize = 16sp()
+            textSize = 16f
             setTextColor(Color.WHITE)
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 8)
         }
         val sub = TextView(this).apply {
             text = "Draw an outward curved line from top to bottom. It will become the contour of your bezel squeeze."
-            textSize = 13sp()
+            textSize = 13f
             setTextColor(0xFFAAAAAA.toInt())
             setPadding(0, 0, 0, 16)
         }
@@ -276,8 +276,6 @@ class MainActivity : AppCompatActivity() {
         dialog.setContentView(container)
         dialog.show()
     }
-
-    private fun Int.sp(): Float = this.toFloat()
 }
 
 class SimpleDrawingCanvas(context: Context) : View(context) {
