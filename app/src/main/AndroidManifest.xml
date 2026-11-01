@@ -2,11 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher_foreground"
-        android:label="Bezel Squeeze Pro"
+        android:label="Bezel Squeeze"
         android:theme="@style/Theme.Material3.Dark.NoActionBar">
 
         <activity
@@ -21,7 +22,7 @@
         <service
             android:name=".BezelAccessibilityService"
             android:exported="true"
-            android:label="Bezel Hardware Engine"
+            android:label="Bezel Squeeze Engine"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
