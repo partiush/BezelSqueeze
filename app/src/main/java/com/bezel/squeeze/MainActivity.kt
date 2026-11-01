@@ -2,7 +2,6 @@ package com.bezel.squeeze
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.annotation.SuppressLint
-import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
@@ -19,7 +18,13 @@ import android.view.View
 import android.view.accessibility.AccessibilityManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.slider.Slider
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 
 class MainActivity : AppCompatActivity() {
 
@@ -28,7 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusBadge: TextView
     private lateinit var rockerSliderBox: LinearLayout
     private lateinit var splitSliderBox: LinearLayout
-    private lateinit var customDrawBtn: Button
+    private lateinit var customDrawBtn: MaterialButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,21 +57,21 @@ class MainActivity : AppCompatActivity() {
         }
         mainLayout.addView(statusBadge)
 
-        // --- Accessibility Card ---
+        // --- Permission Banner ---
         permCard = MaterialCardView(this).apply {
-            radius = 24f
+            radius = 28f
             setCardBackgroundColor(0xFF1E1E1E.toInt())
             val inner = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(32, 32, 32, 32)
                 val tip = TextView(this@MainActivity).apply {
-                    text = "Permission required to detect your button clicks."
+                    text = "Permission required to track button presses."
                     textSize = 14f
                     setTextColor(0xFFFF9F0A.toInt())
                     setPadding(0, 0, 0, 16)
                 }
-                val btn = Button(this@MainActivity).apply {
-                    text = "Enable in Settings"
+                val btn = MaterialButton(this@MainActivity).apply {
+                    text = "Enable in Accessibility"
                     setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                 }
                 addView(tip)
@@ -76,26 +81,25 @@ class MainActivity : AppCompatActivity() {
         }
         mainLayout.addView(permCard)
 
-        // --- Background Protection Card ---
+        // --- Battery Protection ---
         batteryCard = MaterialCardView(this).apply {
-            radius = 24f
+            radius = 28f
             setCardBackgroundColor(0xFF1E1E1E.toInt())
-            val params = LinearLayout.LayoutParams(
+            layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, 0, 0, 24) }
-            layoutParams = params
 
             val inner = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(32, 32, 32, 32)
                 val tip = TextView(this@MainActivity).apply {
-                    text = "Prevent Android from stopping the app when cleared from background."
+                    text = "Prevent Android from stopping the engine in the background."
                     textSize = 14f
                     setTextColor(0xFFCCCCCC.toInt())
                     setPadding(0, 0, 0, 12)
                 }
-                val btn = Button(this@MainActivity).apply {
+                val btn = MaterialButton(this@MainActivity).apply {
                     text = "Allow Continuous Background Run"
                     setOnClickListener {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -113,17 +117,17 @@ class MainActivity : AppCompatActivity() {
         }
         mainLayout.addView(batteryCard)
 
-        // --- On-Screen Test Card ---
+        // --- Live Screen Test ---
         addCard(mainLayout, "Live Screen Test") { container ->
             val tip = TextView(this).apply {
-                text = "Hold the button below to see the effect directly on your screen bezel."
+                text = "Hold down the button below to preview the bulge directly on your screen bezel."
                 textSize = 13f
                 setTextColor(0xFFAAAAAA.toInt())
                 setPadding(0, 0, 0, 12)
             }
             container.addView(tip)
 
-            val holdBtn = Button(this).apply {
+            val holdBtn = MaterialButton(this).apply {
                 text = "Hold to Test Bezel Squeeze"
                 setOnTouchListener { _, event ->
                     when (event.action) {
@@ -143,7 +147,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // --- 1. Shape & Appearance ---
-        addCard(mainLayout, "Shape & Color") { container ->
+        addCard(mainLayout, "Shape & Appearance") { container ->
             val spinner = Spinner(this)
             val shapes = arrayOf(
                 "Smooth Curved Lip",
@@ -155,7 +159,7 @@ class MainActivity : AppCompatActivity() {
             spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, shapes)
             spinner.setSelection(prefs.getInt("shape_type", 0))
 
-            customDrawBtn = Button(this).apply {
+            customDrawBtn = MaterialButton(this).apply {
                 text = "Open Drawing Canvas"
                 visibility = if (prefs.getInt("shape_type", 0) == 4) View.VISIBLE else View.GONE
                 setOnClickListener { showDrawingDialog(::notifyEngine) }
@@ -176,13 +180,13 @@ class MainActivity : AppCompatActivity() {
             val colRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, 16, 0, 8)
+                setPadding(0, 20, 0, 8)
             }
             val previewBox = View(this).apply {
-                layoutParams = LinearLayout.LayoutParams(70, 70)
+                layoutParams = LinearLayout.LayoutParams(72, 72)
                 setBackgroundColor(prefs.getInt("bulge_color", Color.BLACK))
             }
-            val chooseColBtn = Button(this).apply {
+            val chooseColBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
                 text = "Change Bezel Color"
                 setOnClickListener {
                     showColorDialog { newColor ->
@@ -197,9 +201,9 @@ class MainActivity : AppCompatActivity() {
             container.addView(colRow)
         }
 
-        // --- 2. Button Arrangement ---
+        // --- 2. Button Placement & Layout ---
         addCard(mainLayout, "Button Layout") { container ->
-            val edgeSwitch = Switch(this).apply {
+            val edgeSwitch = MaterialSwitch(this).apply {
                 text = "Buttons are on the Right Edge (Off = Left)"
                 isChecked = prefs.getBoolean("is_right_edge", true)
                 setOnCheckedChangeListener { _, isChecked ->
@@ -212,7 +216,7 @@ class MainActivity : AppCompatActivity() {
             rockerSliderBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             splitSliderBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-            val rockerSwitch = Switch(this).apply {
+            val rockerSwitch = MaterialSwitch(this).apply {
                 text = "Unified Single Volume Bar"
                 isChecked = prefs.getBoolean("is_unified_rocker", true)
                 setOnCheckedChangeListener { _, isChecked ->
@@ -224,10 +228,10 @@ class MainActivity : AppCompatActivity() {
             }
             container.addView(rockerSwitch)
 
-            addFineSlider(rockerSliderBox, "Total Bar Length", "rocker_length", 380f, 10f, "px", ::notifyEngine)
+            addMaterialSlider(rockerSliderBox, "Total Bar Length", "rocker_length", 80f, 900f, 380f, 10f, "px", ::notifyEngine)
             container.addView(rockerSliderBox)
 
-            addFineSlider(splitSliderBox, "Separate Button Length", "single_btn_length", 160f, 10f, "px", ::notifyEngine)
+            addMaterialSlider(splitSliderBox, "Separate Button Length", "single_btn_length", 50f, 500f, 160f, 10f, "px", ::notifyEngine)
             container.addView(splitSliderBox)
 
             val isRocker = prefs.getBoolean("is_unified_rocker", true)
@@ -237,11 +241,11 @@ class MainActivity : AppCompatActivity() {
 
         // --- 3. Placement & Sizing ---
         addCard(mainLayout, "Position & Size") { container ->
-            addFineSlider(container, "Volume Up Height", "vol_up_y", 720f, 10f, "px", ::notifyEngine)
-            addFineSlider(container, "Volume Down Height", "vol_down_y", 960f, 10f, "px", ::notifyEngine)
-            addFineSlider(container, "Bulge Depth", "bulge_depth", 40f, 2f, "px", ::notifyEngine)
-            addFineSlider(container, "Inward Speed", "press_speed_ms", 85f, 5f, "ms", ::notifyEngine)
-            addFineSlider(container, "Release Speed", "release_speed_ms", 160f, 10f, "ms", ::notifyEngine)
+            addMaterialSlider(container, "Volume Up Height", "vol_up_y", 50f, 2500f, 720f, 10f, "px", ::notifyEngine)
+            addMaterialSlider(container, "Volume Down Height", "vol_down_y", 50f, 2500f, 960f, 10f, "px", ::notifyEngine)
+            addMaterialSlider(container, "Bulge Depth", "bulge_depth", 5f, 250f, 40f, 2f, "px", ::notifyEngine)
+            addMaterialSlider(container, "Inward Speed", "press_speed_ms", 20f, 400f, 85f, 5f, "ms", ::notifyEngine)
+            addMaterialSlider(container, "Release Speed", "release_speed_ms", 40f, 600f, 160f, 10f, "ms", ::notifyEngine)
         }
 
         // --- 4. Extra Physical Button ---
@@ -255,7 +259,7 @@ class MainActivity : AppCompatActivity() {
             }
             container.addView(infoTv)
 
-            val detectBtn = Button(this).apply {
+            val detectBtn = MaterialButton(this).apply {
                 text = "Map Extra Button"
                 setOnClickListener {
                     text = "Press your button now..."
@@ -273,8 +277,8 @@ class MainActivity : AppCompatActivity() {
             }
             container.addView(detectBtn)
 
-            addFineSlider(container, "Extra Button Height", "extra_y", 500f, 10f, "px", ::notifyEngine)
-            addFineSlider(container, "Extra Button Length", "extra_length", 160f, 10f, "px", ::notifyEngine)
+            addMaterialSlider(container, "Extra Button Height", "extra_y", 50f, 2500f, 500f, 10f, "px", ::notifyEngine)
+            addMaterialSlider(container, "Extra Button Length", "extra_length", 50f, 600f, 160f, 10f, "px", ::notifyEngine)
         }
 
         setContentView(root)
@@ -287,7 +291,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun addCard(parent: LinearLayout, title: String, content: (LinearLayout) -> Unit) {
         val card = MaterialCardView(this).apply {
-            radius = 24f
+            radius = 28f
             setCardBackgroundColor(0xFF161618.toInt())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -312,17 +316,19 @@ class MainActivity : AppCompatActivity() {
         parent.addView(card)
     }
 
-    private fun addFineSlider(
+    private fun addMaterialSlider(
         parent: LinearLayout,
         label: String,
         key: String,
+        min: Float,
+        max: Float,
         def: Float,
         step: Float,
         unit: String,
         onChanged: () -> Unit
     ) {
         val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
-        val currentVal = prefs.getFloat(key, def)
+        val currentVal = prefs.getFloat(key, def).coerceIn(min, max)
 
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -336,84 +342,70 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        val editBtn = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+        val editBtn = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
             text = "Edit"
             textSize = 12f
-            setOnClickListener {
-                val input = EditText(this@MainActivity).apply {
-                    inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                    setText(prefs.getFloat(key, def).toString())
-                }
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Set $label")
-                    .setView(input)
-                    .setPositiveButton("Save") { _, _ ->
-                        input.text.toString().toFloatOrNull()?.let { entered ->
-                            prefs.edit().putFloat(key, entered).apply()
-                            titleTv.text = "$label: ${entered.toInt()} $unit"
-                            onChanged()
-                        }
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            }
         }
+
         headerRow.addView(titleTv)
         headerRow.addView(editBtn)
-
-        val btnRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 4, 0, 16)
-        }
-
-        fun adjust(delta: Float) {
-            val newVal = (prefs.getFloat(key, def) + delta).coerceAtLeast(0f)
-            prefs.edit().putFloat(key, newVal).apply()
-            titleTv.text = "$label: ${newVal.toInt()} $unit"
-            onChanged()
-        }
-
-        val minusBig = Button(this).apply {
-            text = "-10"
-            layoutParams = LinearLayout.LayoutParams(110, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setOnClickListener { adjust(-step * 5) }
-        }
-        val minusSmall = Button(this).apply {
-            text = "-"
-            layoutParams = LinearLayout.LayoutParams(95, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setOnClickListener { adjust(-step) }
-        }
-        val plusSmall = Button(this).apply {
-            text = "+"
-            layoutParams = LinearLayout.LayoutParams(95, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setOnClickListener { adjust(step) }
-        }
-        val plusBig = Button(this).apply {
-            text = "+10"
-            layoutParams = LinearLayout.LayoutParams(110, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setOnClickListener { adjust(step * 5) }
-        }
-
-        btnRow.addView(minusBig)
-        btnRow.addView(minusSmall)
-        btnRow.addView(plusSmall)
-        btnRow.addView(plusBig)
-
         parent.addView(headerRow)
-        parent.addView(btnRow)
+
+        val slider = Slider(this).apply {
+            valueFrom = min
+            valueTo = max
+            stepSize = step
+            value = currentVal
+            setLabelFormatter { "${it.toInt()} $unit" }
+        }
+
+        editBtn.setOnClickListener {
+            val textInputLayout = TextInputLayout(this@MainActivity).apply {
+                setPadding(40, 16, 40, 0)
+            }
+            val input = TextInputEditText(textInputLayout.context).apply {
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                setText(slider.value.toInt().toString())
+            }
+            textInputLayout.addView(input)
+
+            MaterialAlertDialogBuilder(this@MainActivity)
+                .setTitle("Set $label")
+                .setView(textInputLayout)
+                .setPositiveButton("Save") { _, _ ->
+                    input.text.toString().toFloatOrNull()?.let { entered ->
+                        val clamped = entered.coerceIn(min, max)
+                        slider.value = clamped
+                        prefs.edit().putFloat(key, clamped).apply()
+                        titleTv.text = "$label: ${clamped.toInt()} $unit"
+                        onChanged()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+
+        slider.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                prefs.edit().putFloat(key, value).apply()
+                titleTv.text = "$label: ${value.toInt()} $unit"
+                onChanged()
+            }
+        }
+
+        parent.addView(slider)
     }
 
     private fun showColorDialog(onColorChosen: (Int) -> Unit) {
         val colors = arrayOf("Black", "Dark Gray", "Blue", "Red", "Custom HEX")
         val values = intArrayOf(Color.BLACK, 0xFF333333.toInt(), 0xFF007AFF.toInt(), 0xFFFF3B30.toInt(), 0)
 
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("Select Bezel Color")
             .setItems(colors) { _, which ->
                 if (which == 4) {
                     val input = EditText(this).apply { hint = "#000000" }
-                    AlertDialog.Builder(this)
+                    MaterialAlertDialogBuilder(this)
                         .setTitle("Enter HEX Color")
                         .setView(input)
                         .setPositiveButton("Apply") { _, _ ->
@@ -464,7 +456,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 8)
         }
         val sub = TextView(this).apply {
-            text = "Draw a curve from top to bottom representing how the bezel should bend inward."
+            text = "Draw an outward curved line from top to bottom. It will become the contour of your bezel squeeze."
             textSize = 13f
             setTextColor(0xFFAAAAAA.toInt())
             setPadding(0, 0, 0, 16)
@@ -483,11 +475,11 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 16, 0, 0)
         }
-        val clearBtn = Button(this).apply {
+        val clearBtn = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
             text = "Clear"
             setOnClickListener { drawCanvas.reset() }
         }
-        val saveBtn = Button(this).apply {
+        val saveBtn = MaterialButton(this).apply {
             text = "Save & Apply"
             setOnClickListener {
                 val data = drawCanvas.getNormalizedData()
@@ -507,29 +499,40 @@ class MainActivity : AppCompatActivity() {
 
 class SimpleDrawingCanvas(context: Context) : View(context) {
     private val points = mutableListOf<PointF>()
+    private val path = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF007AFF.toInt()
+        color = 0xFF0A84FF.toInt()
         style = Paint.Style.STROKE
         strokeWidth = 8f
         strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF3A3A3C.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
     }
 
     fun reset() {
         points.clear()
+        path.reset()
         invalidate()
     }
 
     fun getNormalizedData(): String {
-        if (points.size < 3) return ""
-        val sorted = points.sortedBy { it.y }
-        val minY = sorted.first().y
-        val maxY = sorted.last().y
-        val h = (maxY - minY).coerceAtLeast(1f)
-        val w = width.toFloat().coerceAtLeast(1f)
+        if (points.size < 2) return ""
 
-        return sorted.map {
-            val normY = ((it.y - minY) / h).coerceIn(0f, 1f)
-            val normX = (it.x / w).coerceIn(0f, 1f)
+        val minY = points.minOf { it.y }
+        val maxY = points.maxOf { it.y }
+        val heightSpan = (maxY - minY).coerceAtLeast(1f)
+
+        val minX = points.minOf { it.x }
+        val maxX = points.maxOf { it.x }
+        val widthSpan = (maxX - minX).coerceAtLeast(1f)
+
+        return points.map {
+            val normY = ((it.y - minY) / heightSpan).coerceIn(0f, 1f)
+            val normX = ((it.x - minX) / widthSpan).coerceIn(0f, 1f)
             "$normY,$normX"
         }.joinToString(";")
     }
@@ -539,10 +542,18 @@ class SimpleDrawingCanvas(context: Context) : View(context) {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 points.clear()
+                path.reset()
+                path.moveTo(event.x, event.y)
                 points.add(PointF(event.x, event.y))
                 invalidate()
             }
-            MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+            MotionEvent.ACTION_MOVE -> {
+                path.lineTo(event.x, event.y)
+                points.add(PointF(event.x, event.y))
+                invalidate()
+            }
+            MotionEvent.ACTION_UP -> {
+                path.lineTo(event.x, event.y)
                 points.add(PointF(event.x, event.y))
                 invalidate()
             }
@@ -552,11 +563,8 @@ class SimpleDrawingCanvas(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawColor(0xFF111111.toInt())
-        if (points.size > 1) {
-            for (i in 0 until points.size - 1) {
-                canvas.drawLine(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y, paint)
-            }
-        }
+        canvas.drawColor(0xFF121212.toInt())
+        canvas.drawLine(16f, 0f, 16f, height.toFloat(), guidePaint)
+        canvas.drawPath(path, paint)
     }
 }
