@@ -6,13 +6,8 @@ import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.*
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
-import android.text.InputType
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityManager
@@ -23,264 +18,163 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var permCard: MaterialCardView
-    private lateinit var batteryCard: MaterialCardView
-    private lateinit var statusBadge: TextView
-    private lateinit var rockerSliderBox: LinearLayout
-    private lateinit var splitSliderBox: LinearLayout
-    private lateinit var customDrawBtn: MaterialButton
+    private lateinit var tvStatus: TextView
+    private lateinit var cardPerm: MaterialCardView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
 
         val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
-
-        val root = ScrollView(this).apply { setPadding(32, 40, 32, 60) }
-        val mainLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(mainLayout)
 
         fun notifyEngine() {
             sendBroadcast(Intent("com.bezel.squeeze.UPDATE_SETTINGS").setPackage(packageName))
         }
 
-        // --- Status Badge ---
-        statusBadge = TextView(this).apply {
-            text = "● Service Active"
-            textSize = 15f
-            setTextColor(0xFF34C759.toInt())
-            setPadding(0, 0, 0, 16)
-        }
-        mainLayout.addView(statusBadge)
+        // Views
+        tvStatus = findViewById(R.id.tvStatus)
+        cardPerm = findViewById(R.id.cardPerm)
+        val btnPerm: MaterialButton = findViewById(R.id.btnPerm)
+        val btnHoldTest: MaterialButton = findViewById(R.id.btnHoldTest)
+        val spinnerShape: Spinner = findViewById(R.id.spinnerShape)
+        val btnOpenDraw: MaterialButton = findViewById(R.id.btnOpenDraw)
+        val colorPreview: View = findViewById(R.id.colorPreview)
+        val btnPickColor: MaterialButton = findViewById(R.id.btnPickColor)
 
-        // --- Permission Banner ---
-        permCard = MaterialCardView(this).apply {
-            radius = 28f
-            setCardBackgroundColor(0xFF1E1E1E.toInt())
-            val inner = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(32, 32, 32, 32)
-                val tip = TextView(this@MainActivity).apply {
-                    text = "Permission required to track button presses."
-                    textSize = 14f
-                    setTextColor(0xFFFF9F0A.toInt())
-                    setPadding(0, 0, 0, 16)
-                }
-                val btn = MaterialButton(this@MainActivity).apply {
-                    text = "Enable in Accessibility"
-                    setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                }
-                addView(tip)
-                addView(btn)
-            }
-            addView(inner)
-        }
-        mainLayout.addView(permCard)
+        val switchRightEdge: MaterialSwitch = findViewById(R.id.switchRightEdge)
+        val switchUnified: MaterialSwitch = findViewById(R.id.switchUnified)
+        val boxUnified: LinearLayout = findViewById(R.id.boxUnified)
+        val boxSplit: LinearLayout = findViewById(R.id.boxSplit)
+        val tvRockerLen: TextView = findViewById(R.id.tvRockerLen)
+        val sliderRockerLen: Slider = findViewById(R.id.sliderRockerLen)
+        val tvSingleLen: TextView = findViewById(R.id.tvSingleLen)
+        val sliderSingleLen: Slider = findViewById(R.id.sliderSingleLen)
 
-        // --- Battery Protection ---
-        batteryCard = MaterialCardView(this).apply {
-            radius = 28f
-            setCardBackgroundColor(0xFF1E1E1E.toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 0, 0, 24) }
+        val tvVolUpY: TextView = findViewById(R.id.tvVolUpY)
+        val sliderVolUpY: Slider = findViewById(R.id.sliderVolUpY)
+        val tvVolDownY: TextView = findViewById(R.id.tvVolDownY)
+        val sliderVolDownY: Slider = findViewById(R.id.sliderVolDownY)
+        val tvDepth: TextView = findViewById(R.id.tvDepth)
+        val sliderDepth: Slider = findViewById(R.id.sliderDepth)
+        val tvSpeed: TextView = findViewById(R.id.tvSpeed)
+        val sliderSpeed: Slider = findViewById(R.id.sliderSpeed)
 
-            val inner = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(32, 32, 32, 32)
-                val tip = TextView(this@MainActivity).apply {
-                    text = "Prevent Android from stopping the engine in the background."
-                    textSize = 14f
-                    setTextColor(0xFFCCCCCC.toInt())
-                    setPadding(0, 0, 0, 12)
-                }
-                val btn = MaterialButton(this@MainActivity).apply {
-                    text = "Allow Continuous Background Run"
-                    setOnClickListener {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = Uri.parse("package:$packageName")
-                            }
-                            try { startActivity(intent) } catch (_: Exception) {}
-                        }
-                    }
-                }
-                addView(tip)
-                addView(btn)
-            }
-            addView(inner)
-        }
-        mainLayout.addView(batteryCard)
+        val tvExtraKeyStatus: TextView = findViewById(R.id.tvExtraKeyStatus)
+        val btnMapExtra: MaterialButton = findViewById(R.id.btnMapExtra)
+        val tvExtraY: TextView = findViewById(R.id.tvExtraY)
+        val sliderExtraY: Slider = findViewById(R.id.sliderExtraY)
 
-        // --- Live Screen Test ---
-        addCard(mainLayout, "Live Screen Test") { container ->
-            val tip = TextView(this).apply {
-                text = "Hold down the button below to preview the bulge directly on your screen bezel."
-                textSize = 13f
-                setTextColor(0xFFAAAAAA.toInt())
-                setPadding(0, 0, 0, 12)
-            }
-            container.addView(tip)
-
-            val holdBtn = MaterialButton(this).apply {
-                text = "Hold to Test Bezel Squeeze"
-                setOnTouchListener { _, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            sendBroadcast(Intent("com.bezel.squeeze.TEST_PRESS").setPackage(packageName))
-                            true
-                        }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            sendBroadcast(Intent("com.bezel.squeeze.TEST_RELEASE").setPackage(packageName))
-                            true
-                        }
-                        else -> false
-                    }
-                }
-            }
-            container.addView(holdBtn)
+        // Permission Button
+        btnPerm.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        // --- 1. Shape & Appearance ---
-        addCard(mainLayout, "Shape & Appearance") { container ->
-            val spinner = Spinner(this)
-            val shapes = arrayOf(
-                "Smooth Curved Lip",
-                "Organic Teardrop",
-                "Rounded Pill",
-                "Beveled Edge",
-                "Custom Freehand Drawing"
-            )
-            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, shapes)
-            spinner.setSelection(prefs.getInt("shape_type", 0))
-
-            customDrawBtn = MaterialButton(this).apply {
-                text = "Open Drawing Canvas"
-                visibility = if (prefs.getInt("shape_type", 0) == 4) View.VISIBLE else View.GONE
-                setOnClickListener { showDrawingDialog(::notifyEngine) }
-            }
-
-            spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p0: AdapterView<*>?, p1: View?, pos: Int, p3: Long) {
-                    prefs.edit().putInt("shape_type", pos).apply()
-                    customDrawBtn.visibility = if (pos == 4) View.VISIBLE else View.GONE
-                    notifyEngine()
+        // Live Hold Test
+        btnHoldTest.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    sendBroadcast(Intent("com.bezel.squeeze.TEST_PRESS").setPackage(packageName))
+                    true
                 }
-                override fun onNothingSelected(p0: AdapterView<*>?) {}
-            }
-            container.addView(spinner)
-            container.addView(customDrawBtn)
-
-            val colRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, 20, 0, 8)
-            }
-            val previewBox = View(this).apply {
-                layoutParams = LinearLayout.LayoutParams(72, 72)
-                setBackgroundColor(prefs.getInt("bulge_color", Color.BLACK))
-            }
-            val chooseColBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                text = "Change Bezel Color"
-                setOnClickListener {
-                    showColorDialog { newColor ->
-                        prefs.edit().putInt("bulge_color", newColor).apply()
-                        previewBox.setBackgroundColor(newColor)
-                        notifyEngine()
-                    }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    sendBroadcast(Intent("com.bezel.squeeze.TEST_RELEASE").setPackage(packageName))
+                    true
                 }
+                else -> false
             }
-            colRow.addView(previewBox)
-            colRow.addView(chooseColBtn)
-            container.addView(colRow)
         }
 
-        // --- 2. Button Placement & Layout ---
-        addCard(mainLayout, "Button Layout") { container ->
-            val edgeSwitch = MaterialSwitch(this).apply {
-                text = "Buttons are on the Right Edge (Off = Left)"
-                isChecked = prefs.getBoolean("is_right_edge", true)
-                setOnCheckedChangeListener { _, isChecked ->
-                    prefs.edit().putBoolean("is_right_edge", isChecked).apply()
+        // Shape Spinner
+        val shapes = arrayOf("Smooth Curved Lip", "Organic Teardrop", "Rounded Pill", "Beveled Edge", "Custom Freehand Drawing")
+        spinnerShape.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, shapes)
+        spinnerShape.setSelection(prefs.getInt("shape_type", 0))
+        btnOpenDraw.visibility = if (prefs.getInt("shape_type", 0) == 4) View.VISIBLE else View.GONE
+
+        spinnerShape.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p0: AdapterView<*>?, p1: View?, pos: Int, p3: Long) {
+                prefs.edit().putInt("shape_type", pos).apply()
+                btnOpenDraw.visibility = if (pos == 4) View.VISIBLE else View.GONE
+                notifyEngine()
+            }
+            override fun onNothingSelected(p0: AdapterView<*>?) {}
+        }
+
+        btnOpenDraw.setOnClickListener {
+            showDrawingDialog(::notifyEngine)
+        }
+
+        // Color Picker
+        colorPreview.setBackgroundColor(prefs.getInt("bulge_color", Color.BLACK))
+        btnPickColor.setOnClickListener {
+            showColorDialog { col ->
+                prefs.edit().putInt("bulge_color", col).apply()
+                colorPreview.setBackgroundColor(col)
+                notifyEngine()
+            }
+        }
+
+        // Switches
+        switchRightEdge.isChecked = prefs.getBoolean("is_right_edge", true)
+        switchRightEdge.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("is_right_edge", isChecked).apply()
+            notifyEngine()
+        }
+
+        val isUnified = prefs.getBoolean("is_unified_rocker", true)
+        switchUnified.isChecked = isUnified
+        boxUnified.visibility = if (isUnified) View.VISIBLE else View.GONE
+        boxSplit.visibility = if (isUnified) View.GONE else View.VISIBLE
+
+        switchUnified.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("is_unified_rocker", isChecked).apply()
+            boxUnified.visibility = if (isChecked) View.VISIBLE else View.GONE
+            boxSplit.visibility = if (isChecked) View.GONE else View.VISIBLE
+            notifyEngine()
+        }
+
+        // Helper to bind sliders safely
+        fun bindSlider(slider: Slider, textLabel: TextView, labelText: String, key: String, defVal: Float, unit: String) {
+            val saved = prefs.getFloat(key, defVal).coerceIn(slider.valueFrom, slider.valueTo)
+            val snapped = slider.valueFrom + Math.round((saved - slider.valueFrom) / slider.stepSize) * slider.stepSize
+            slider.value = snapped
+            textLabel.text = "$labelText: ${snapped.toInt()} $unit"
+
+            slider.addOnChangeListener { _, value, fromUser ->
+                if (fromUser) {
+                    prefs.edit().putFloat(key, value).apply()
+                    textLabel.text = "$labelText: ${value.toInt()} $unit"
                     notifyEngine()
                 }
             }
-            container.addView(edgeSwitch)
+        }
 
-            rockerSliderBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            splitSliderBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        bindSlider(sliderRockerLen, tvRockerLen, "Total Bar Length", "rocker_length", 380f, "px")
+        bindSlider(sliderSingleLen, tvSingleLen, "Separate Button Length", "single_btn_length", 160f, "px")
+        bindSlider(sliderVolUpY, tvVolUpY, "Volume Up Height", "vol_up_y", 720f, "px")
+        bindSlider(sliderVolDownY, tvVolDownY, "Volume Down Height", "vol_down_y", 960f, "px")
+        bindSlider(sliderDepth, tvDepth, "Bulge Depth", "bulge_depth", 40f, "px")
+        bindSlider(sliderSpeed, tvSpeed, "Inward Speed", "press_speed_ms", 85f, "ms")
 
-            val rockerSwitch = MaterialSwitch(this).apply {
-                text = "Unified Single Volume Bar"
-                isChecked = prefs.getBoolean("is_unified_rocker", true)
-                setOnCheckedChangeListener { _, isChecked ->
-                    prefs.edit().putBoolean("is_unified_rocker", isChecked).apply()
-                    rockerSliderBox.visibility = if (isChecked) View.VISIBLE else View.GONE
-                    splitSliderBox.visibility = if (isChecked) View.GONE else View.VISIBLE
+        // Extra Hardware Key
+        val mappedCode = prefs.getInt("extra_button_code", -1)
+        if (mappedCode != -1) tvExtraKeyStatus.text = "Mapped Key Code: $mappedCode"
+        btnMapExtra.setOnClickListener {
+            btnMapExtra.text = "Press your button now..."
+            BezelAccessibilityService.isListeningForKey = true
+            BezelAccessibilityService.onKeyDetected = { code ->
+                runOnUiThread {
+                    prefs.edit().putInt("extra_button_code", code).apply()
+                    tvExtraKeyStatus.text = "Mapped Key Code: $code"
+                    btnMapExtra.text = "Map Extra Button"
                     notifyEngine()
+                    Toast.makeText(this, "Saved Button: $code", Toast.LENGTH_SHORT).show()
                 }
             }
-            container.addView(rockerSwitch)
-
-            addMaterialSlider(rockerSliderBox, "Total Bar Length", "rocker_length", 80f, 900f, 380f, 10f, "px", ::notifyEngine)
-            container.addView(rockerSliderBox)
-
-            addMaterialSlider(splitSliderBox, "Separate Button Length", "single_btn_length", 50f, 500f, 160f, 10f, "px", ::notifyEngine)
-            container.addView(splitSliderBox)
-
-            val isRocker = prefs.getBoolean("is_unified_rocker", true)
-            rockerSliderBox.visibility = if (isRocker) View.VISIBLE else View.GONE
-            splitSliderBox.visibility = if (isRocker) View.GONE else View.VISIBLE
         }
-
-        // --- 3. Placement & Sizing ---
-        addCard(mainLayout, "Position & Size") { container ->
-            addMaterialSlider(container, "Volume Up Height", "vol_up_y", 50f, 2500f, 720f, 10f, "px", ::notifyEngine)
-            addMaterialSlider(container, "Volume Down Height", "vol_down_y", 50f, 2500f, 960f, 10f, "px", ::notifyEngine)
-            addMaterialSlider(container, "Bulge Depth", "bulge_depth", 5f, 250f, 40f, 2f, "px", ::notifyEngine)
-            addMaterialSlider(container, "Inward Speed", "press_speed_ms", 20f, 400f, 85f, 5f, "ms", ::notifyEngine)
-            addMaterialSlider(container, "Release Speed", "release_speed_ms", 40f, 600f, 160f, 10f, "ms", ::notifyEngine)
-        }
-
-        // --- 4. Extra Physical Button ---
-        addCard(mainLayout, "Extra Hardware Button") { container ->
-            val mappedCode = prefs.getInt("extra_button_code", -1)
-            val infoTv = TextView(this).apply {
-                text = if (mappedCode != -1) "Mapped Key Code: $mappedCode" else "No extra button mapped."
-                textSize = 14f
-                setTextColor(0xFFAAAAAA.toInt())
-                setPadding(0, 0, 0, 10)
-            }
-            container.addView(infoTv)
-
-            val detectBtn = MaterialButton(this).apply {
-                text = "Map Extra Button"
-                setOnClickListener {
-                    text = "Press your button now..."
-                    BezelAccessibilityService.isListeningForKey = true
-                    BezelAccessibilityService.onKeyDetected = { code ->
-                        runOnUiThread {
-                            prefs.edit().putInt("extra_button_code", code).apply()
-                            infoTv.text = "Mapped Key Code: $code"
-                            text = "Map Extra Button"
-                            notifyEngine()
-                            Toast.makeText(this@MainActivity, "Saved Button: $code", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            container.addView(detectBtn)
-
-            addMaterialSlider(container, "Extra Button Height", "extra_y", 50f, 2500f, 500f, 10f, "px", ::notifyEngine)
-            addMaterialSlider(container, "Extra Button Length", "extra_length", 50f, 600f, 160f, 10f, "px", ::notifyEngine)
-        }
-
-        setContentView(root)
+        bindSlider(sliderExtraY, tvExtraY, "Extra Button Height", "extra_y", 500f, "px")
     }
 
     override fun onResume() {
@@ -288,112 +182,13 @@ class MainActivity : AppCompatActivity() {
         updatePermissionStatus()
     }
 
-    private fun addCard(parent: LinearLayout, title: String, content: (LinearLayout) -> Unit) {
-        val card = MaterialCardView(this).apply {
-            radius = 28f
-            setCardBackgroundColor(0xFF161618.toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 0, 0, 24) }
+    private fun updatePermissionStatus() {
+        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledList = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        val isRunning = enabledList.any { it.resolveInfo.serviceInfo.packageName == packageName }
 
-            val inner = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(28, 28, 28, 28)
-                val head = TextView(this@MainActivity).apply {
-                    text = title
-                    textSize = 16f
-                    setTypeface(null, Typeface.BOLD)
-                    setTextColor(Color.WHITE)
-                    setPadding(0, 0, 0, 16)
-                }
-                addView(head)
-                content(this)
-            }
-            addView(inner)
-        }
-        parent.addView(card)
-    }
-
-    private fun addMaterialSlider(
-        parent: LinearLayout,
-        label: String,
-        key: String,
-        min: Float,
-        max: Float,
-        def: Float,
-        step: Float,
-        unit: String,
-        onChanged: () -> Unit
-    ) {
-        val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
-        val raw = prefs.getFloat(key, def)
-        val validVal = (min + Math.round((raw - min) / step) * step).coerceIn(min, max)
-
-        val headerRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val titleTv = TextView(this).apply {
-            text = "$label: ${validVal.toInt()} $unit"
-            textSize = 14f
-            setTextColor(0xFFCCCCCC.toInt())
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        val editBtn = MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
-            text = "Edit"
-            textSize = 12f
-        }
-
-        headerRow.addView(titleTv)
-        headerRow.addView(editBtn)
-        parent.addView(headerRow)
-
-        val slider = Slider(this).apply {
-            valueFrom = min
-            valueTo = max
-            stepSize = step
-            value = validVal
-            setLabelFormatter { "${it.toInt()} $unit" }
-        }
-
-        editBtn.setOnClickListener {
-            val textInputLayout = TextInputLayout(this@MainActivity).apply {
-                setPadding(40, 16, 40, 0)
-            }
-            val input = TextInputEditText(textInputLayout.context).apply {
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                setText(slider.value.toInt().toString())
-            }
-            textInputLayout.addView(input)
-
-            MaterialAlertDialogBuilder(this@MainActivity)
-                .setTitle("Set $label")
-                .setView(textInputLayout)
-                .setPositiveButton("Save") { _, _ ->
-                    input.text.toString().toFloatOrNull()?.let { entered ->
-                        val snapped = (min + Math.round((entered - min) / step) * step).coerceIn(min, max)
-                        slider.value = snapped
-                        prefs.edit().putFloat(key, snapped).apply()
-                        titleTv.text = "$label: ${snapped.toInt()} $unit"
-                        onChanged()
-                    }
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-        }
-
-        slider.addOnChangeListener { _, value, fromUser ->
-            if (fromUser) {
-                prefs.edit().putFloat(key, value).apply()
-                titleTv.text = "$label: ${value.toInt()} $unit"
-                onChanged()
-            }
-        }
-
-        parent.addView(slider)
+        cardPerm.visibility = if (isRunning) View.GONE else View.VISIBLE
+        tvStatus.visibility = if (isRunning) View.VISIBLE else View.GONE
     }
 
     private fun showColorDialog(onColorChosen: (Int) -> Unit) {
@@ -424,20 +219,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun updatePermissionStatus() {
-        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledList = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        val isRunning = enabledList.any { it.resolveInfo.serviceInfo.packageName == packageName }
-
-        permCard.visibility = if (isRunning) View.GONE else View.VISIBLE
-        statusBadge.visibility = if (isRunning) View.VISIBLE else View.GONE
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            batteryCard.visibility = if (pm.isIgnoringBatteryOptimizations(packageName)) View.GONE else View.VISIBLE
-        }
-    }
-
     @SuppressLint("ClickableViewAccessibility")
     private fun showDrawingDialog(onSaved: () -> Unit) {
         val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
@@ -450,14 +231,14 @@ class MainActivity : AppCompatActivity() {
 
         val title = TextView(this).apply {
             text = "Draw Your Custom Bezel Curve"
-            textSize = 16f
+            textSize = 16sp()
             setTextColor(Color.WHITE)
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 8)
         }
         val sub = TextView(this).apply {
             text = "Draw an outward curved line from top to bottom. It will become the contour of your bezel squeeze."
-            textSize = 13f
+            textSize = 13sp()
             setTextColor(0xFFAAAAAA.toInt())
             setPadding(0, 0, 0, 16)
         }
@@ -495,6 +276,8 @@ class MainActivity : AppCompatActivity() {
         dialog.setContentView(container)
         dialog.show()
     }
+
+    private fun Int.sp(): Float = this.toFloat()
 }
 
 class SimpleDrawingCanvas(context: Context) : View(context) {
