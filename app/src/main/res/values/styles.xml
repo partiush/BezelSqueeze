@@ -3,8 +3,6 @@
     <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">#0A84FF</item>
         <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorPrimaryContainer">#004085</item>
-        <item name="colorOnPrimaryContainer">#D1E7DD</item>
         <item name="colorSurface">#161618</item>
         <item name="colorOnSurface">#FFFFFF</item>
         <item name="colorSurfaceVariant">#242426</item>
