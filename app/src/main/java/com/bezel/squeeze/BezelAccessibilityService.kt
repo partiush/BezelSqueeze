@@ -30,7 +30,7 @@ class BezelAccessibilityService : AccessibilityService() {
                 val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
                 if (prefs.getBoolean("enable_power_button", true)) {
                     overlayView.onPowerPress()
-                    mainHandler.postDelayed({ overlayView.onButtonRelease() }, 200)
+                    mainHandler.postDelayed({ overlayView.onButtonRelease() }, 200L)
                 }
             }
         }
@@ -110,6 +110,7 @@ class BezelAccessibilityService : AccessibilityService() {
             powerLength.toInt().coerceAtLeast(40),
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
@@ -143,9 +144,10 @@ class BezelAccessibilityService : AccessibilityService() {
             }
         } else if (event.action == KeyEvent.ACTION_UP) {
             isHoldingKey = false
+            val delay = 50L.coerceAtLeast(latencyMs)
             mainHandler.postDelayed({
                 if (!isHoldingKey) overlayView.onButtonRelease()
-            }, 50.coerceAtLeast(latencyMs))
+            }, delay)
         }
         return false
     }
@@ -288,10 +290,6 @@ class BezelBulgeView(context: Context) : View(context) {
         canvas.drawPath(path, paint)
     }
 
-    /**
-     * Dual-apex mechanical continuous rocker bar:
-     * Maintains a smooth uninterrupted baseline while raising the pressed pivot end.
-     */
     private fun drawUnifiedMechanicalRocker(
         edgeX: Float,
         peakX: Float,
@@ -303,18 +301,15 @@ class BezelBulgeView(context: Context) : View(context) {
         val crestTopY = startY + (rockerHeight * 0.22f)
         val crestBottomY = startY + (rockerHeight * 0.78f)
 
-        // Pressed crest reaches full depth; passive crest maintains subtle base engagement (30%)
         val topPeakX = if (isUpPressed) peakX else edgeX + ((peakX - edgeX) * 0.30f)
         val botPeakX = if (isUpPressed) edgeX + ((peakX - edgeX) * 0.30f) else peakX
 
         path.moveTo(edgeX, startY)
-        // Upper lead-in
         path.cubicTo(
             edgeX, startY + (rockerHeight * 0.08f),
             topPeakX, crestTopY - (rockerHeight * 0.06f),
             topPeakX, crestTopY
         )
-        // Saddle depression connecting both rockers
         val saddleX = edgeX + ((peakX - edgeX) * 0.22f)
         val midY = (startY + endY) / 2f
         path.cubicTo(
@@ -322,7 +317,6 @@ class BezelBulgeView(context: Context) : View(context) {
             saddleX, midY,
             botPeakX, crestBottomY - (rockerHeight * 0.12f)
         )
-        // Lower crest & return to frame
         path.cubicTo(
             botPeakX, crestBottomY + (rockerHeight * 0.06f),
             edgeX, endY - (rockerHeight * 0.08f),
