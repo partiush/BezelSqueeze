@@ -9,12 +9,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.*
 import android.media.AudioManager
-import android.os.Build
-import android.os.Handler
-import android.os.Looper
+import android.os.*
 import android.view.*
 import android.view.accessibility.AccessibilityEvent
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 
 class BezelAccessibilityService : AccessibilityService() {
 
@@ -27,6 +26,7 @@ class BezelAccessibilityService : AccessibilityService() {
     private lateinit var bezelOverlay: BezelBulgeView
     private lateinit var volumePanelOverlay: CustomVolumePanelView
     private lateinit var audioManager: AudioManager
+    private var vibrator: Vibrator? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val settingsReceiver = object : BroadcastReceiver() {
@@ -36,7 +36,10 @@ class BezelAccessibilityService : AccessibilityService() {
                     bezelOverlay.loadSettings()
                     volumePanelOverlay.loadSettings()
                 }
-                "com.bezel.squeeze.TEST_PRESS" -> bezelOverlay.triggerPress(isVolumeUp = true)
+                "com.bezel.squeeze.TEST_PRESS" -> {
+                    performHapticFeedback()
+                    bezelOverlay.triggerPress(isVolumeUp = true)
+                }
                 "com.bezel.squeeze.TEST_RELEASE" -> bezelOverlay.triggerRelease()
                 "com.bezel.squeeze.TEST_PANEL" -> volumePanelOverlay.showPanel()
             }
@@ -47,9 +50,18 @@ class BezelAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(VIBRATOR_SERVICE) as Vibrator
+        }
 
         bezelOverlay = BezelBulgeView(this)
-        volumePanelOverlay = CustomVolumePanelView(this, audioManager)
+        volumePanelOverlay = CustomVolumePanelView(this, audioManager) { isInteractive ->
+            updatePanelTouchability(isInteractive)
+        }
 
         val bezelParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -68,6 +80,7 @@ class BezelAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
@@ -88,11 +101,50 @@ class BezelAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun updatePanelTouchability(interactive: Boolean) {
+        val params = volumePanelOverlay.layoutParams as? WindowManager.LayoutParams ?: return
+        val newFlags = if (interactive) {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        } else {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        }
+        if (params.flags != newFlags) {
+            params.flags = newFlags
+            windowManager.updateViewLayout(volumePanelOverlay, params)
+        }
+    }
+
+    private fun performHapticFeedback() {
+        val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("enable_haptics", true)) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator?.vibrate(VibrationEffect.createOneShot(18, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator?.vibrate(18)
+        }
+    }
+
+    private fun getActiveAudioStream(): Int {
+        return when {
+            audioManager.mode == AudioManager.MODE_IN_CALL -> AudioManager.STREAM_VOICE_CALL
+            audioManager.isMusicActive -> AudioManager.STREAM_MUSIC
+            else -> AudioManager.STREAM_MUSIC
+        }
+    }
+
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (isListeningForKey && event.action == KeyEvent.ACTION_DOWN) {
             onKeyDetected?.invoke(event.keyCode)
             isListeningForKey = false
-            return false
+            return true
         }
 
         val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
@@ -105,11 +157,13 @@ class BezelAccessibilityService : AccessibilityService() {
         if (!isVolUp && !isVolDown && !isExtra) return false
 
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            performHapticFeedback()
             bezelOverlay.triggerPress(isVolumeUp = isVolUp, isExtra = isExtra)
 
             if (isVolUp || isVolDown) {
+                val stream = getActiveAudioStream()
                 val dir = if (isVolUp) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, 0)
+                audioManager.adjustStreamVolume(stream, dir, 0)
                 mainHandler.post { volumePanelOverlay.showPanel() }
             }
         } else if (event.action == KeyEvent.ACTION_UP) {
@@ -193,7 +247,7 @@ class BezelBulgeView(context: Context) : View(context) {
         animator?.cancel()
         animator = ValueAnimator.ofFloat(currentDepth, targetDepth).apply {
             duration = pressSpeed
-            interpolator = DecelerateInterpolator()
+            interpolator = OvershootInterpolator(0.6f)
             addUpdateListener { currentDepth = it.animatedValue as Float }
             start()
         }
@@ -302,7 +356,8 @@ class BezelBulgeView(context: Context) : View(context) {
 
 class CustomVolumePanelView(
     context: Context,
-    private val audioManager: AudioManager
+    private val audioManager: AudioManager,
+    private val onInteractiveChange: (Boolean) -> Unit
 ) : View(context) {
 
     private val prefs = context.getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
@@ -310,7 +365,7 @@ class CustomVolumePanelView(
     private var panelAlpha = 0f
     private var volumeLevel = 0.5f
 
-    private var styleType = 0 // 0=iOS, 1=OneUI, 2=HyperOS, 3=ColorOS, 4=Pixel
+    private var styleType = 0
     private var isRightSide = true
     private var panelY = 800f
     private var baseWidth = 46f
@@ -343,11 +398,11 @@ class CustomVolumePanelView(
         isRightSide = prefs.getBoolean("is_right_edge", true)
         panelY = prefs.getFloat("vol_up_y", 720f) + 100f
         baseWidth = when (styleType) {
-            0 -> 14f // iOS idle slim bar
-            1 -> 48f // OneUI pill
-            2 -> 44f // HyperOS capsule
-            3 -> 42f // ColorOS
-            else -> 56f // Pixel pill
+            0 -> 14f
+            1 -> 48f
+            2 -> 44f
+            3 -> 42f
+            else -> 56f
         }
         panelWidth = baseWidth
         panelHeight = 220f
@@ -355,12 +410,18 @@ class CustomVolumePanelView(
 
     fun showPanel() {
         loadSettings()
-        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val stream = when {
+            audioManager.mode == AudioManager.MODE_IN_CALL -> AudioManager.STREAM_VOICE_CALL
+            audioManager.isMusicActive -> AudioManager.STREAM_MUSIC
+            else -> AudioManager.STREAM_MUSIC
+        }
+        val current = audioManager.getStreamVolume(stream)
+        val max = audioManager.getStreamMaxVolume(stream).coerceAtLeast(1)
         volumeLevel = (current.toFloat() / max.toFloat()).coerceIn(0f, 1f)
 
         hideHandler.removeCallbacks(hideRunnable)
         isVisibleOnScreen = true
+        onInteractiveChange(true)
 
         ValueAnimator.ofFloat(panelAlpha, 1f).apply {
             duration = 140
@@ -383,6 +444,7 @@ class CustomVolumePanelView(
                 if (panelAlpha <= 0.05f) {
                     isVisibleOnScreen = false
                     panelWidth = baseWidth
+                    onInteractiveChange(false)
                 }
             }
             start()
@@ -400,7 +462,7 @@ class CustomVolumePanelView(
         val top = panelY - (panelHeight / 2f)
         val bottom = top + panelHeight
 
-        if (event.x >= left - 50 && event.x <= right + 50 && event.y >= top - 30 && event.y <= bottom + 30) {
+        if (event.x >= left - 60 && event.x <= right + 60 && event.y >= top - 40 && event.y <= bottom + 40) {
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     isTouching = true
@@ -445,8 +507,13 @@ class CustomVolumePanelView(
     private fun updateVolumeFromTouch(touchY: Float, top: Float, bottom: Float) {
         val raw = 1f - ((touchY - top) / panelHeight)
         volumeLevel = raw.coerceIn(0f, 1f)
-        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (volumeLevel * max).toInt(), 0)
+        val stream = when {
+            audioManager.mode == AudioManager.MODE_IN_CALL -> AudioManager.STREAM_VOICE_CALL
+            audioManager.isMusicActive -> AudioManager.STREAM_MUSIC
+            else -> AudioManager.STREAM_MUSIC
+        }
+        val max = audioManager.getStreamMaxVolume(stream)
+        audioManager.setStreamVolume(stream, (volumeLevel * max).toInt(), 0)
         invalidate()
     }
 
@@ -461,35 +528,33 @@ class CustomVolumePanelView(
         val bottom = top + panelHeight
 
         val cornerRadius = when (styleType) {
-            0 -> panelWidth / 2f // iOS squircle capsule
-            1 -> 24f // OneUI
-            2 -> 40f // HyperOS
-            3 -> 16f // ColorOS
-            else -> panelWidth / 2f // Pixel Material You
+            0 -> panelWidth / 2f
+            1 -> 24f
+            2 -> 40f
+            3 -> 16f
+            else -> panelWidth / 2f
         }
 
         val baseAlpha = (panelAlpha * 255).toInt()
 
-        // 1. Background Shell
         when (styleType) {
-            0 -> bgPaint.color = Color.argb((0.45f * baseAlpha).toInt(), 45, 45, 48) // iOS frosted
-            1 -> bgPaint.color = Color.argb((0.85f * baseAlpha).toInt(), 32, 33, 36) // OneUI dark
-            2 -> bgPaint.color = Color.argb((0.65f * baseAlpha).toInt(), 26, 26, 28) // HyperOS frosted
-            3 -> bgPaint.color = Color.argb((0.88f * baseAlpha).toInt(), 20, 20, 22) // ColorOS
-            else -> bgPaint.color = Color.argb((0.75f * baseAlpha).toInt(), 38, 40, 44) // Pixel
+            0 -> bgPaint.color = Color.argb((0.55f * baseAlpha).toInt(), 45, 45, 48)
+            1 -> bgPaint.color = Color.argb((0.85f * baseAlpha).toInt(), 32, 33, 36)
+            2 -> bgPaint.color = Color.argb((0.70f * baseAlpha).toInt(), 26, 26, 28)
+            3 -> bgPaint.color = Color.argb((0.90f * baseAlpha).toInt(), 20, 20, 22)
+            else -> bgPaint.color = Color.argb((0.80f * baseAlpha).toInt(), 38, 40, 44)
         }
         val bgRect = RectF(left, top, right, bottom)
         canvas.drawRoundRect(bgRect, cornerRadius, cornerRadius, bgPaint)
 
-        // 2. Active Volume Fill
         val fillHeight = panelHeight * volumeLevel
         val fillTop = bottom - fillHeight
         when (styleType) {
-            0 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255) // iOS solid white
-            1 -> fillPaint.color = Color.argb(baseAlpha, 68, 138, 255) // OneUI Samsung blue
-            2 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255) // HyperOS clean white
-            3 -> fillPaint.color = Color.argb(baseAlpha, 0, 195, 137) // ColorOS emerald
-            else -> fillPaint.color = Color.argb(baseAlpha, 168, 199, 250) // Pixel pastel
+            0 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255)
+            1 -> fillPaint.color = Color.argb(baseAlpha, 68, 138, 255)
+            2 -> fillPaint.color = Color.argb(baseAlpha, 255, 255, 255)
+            3 -> fillPaint.color = Color.argb(baseAlpha, 0, 195, 137)
+            else -> fillPaint.color = Color.argb(baseAlpha, 168, 199, 250)
         }
 
         canvas.save()
@@ -497,14 +562,12 @@ class CustomVolumePanelView(
         canvas.drawRoundRect(bgRect, cornerRadius, cornerRadius, fillPaint)
         canvas.restore()
 
-        // 3. Glyphs & Percentages
         val centerX = left + (panelWidth / 2f)
-        if (styleType == 1) { // OneUI percentage
+        if (styleType == 1) {
             textPaint.alpha = baseAlpha
             canvas.drawText("${(volumeLevel * 100).toInt()}%", centerX, top - 16f, textPaint)
         }
 
-        // Speaker Glyph Indicator
         iconPaint.alpha = baseAlpha
         iconPaint.color = if (volumeLevel > 0.22f && (styleType == 0 || styleType == 2)) Color.BLACK else Color.WHITE
         if (panelWidth >= 28f) {
