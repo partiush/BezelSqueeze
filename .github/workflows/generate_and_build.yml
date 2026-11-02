@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 2
-                  versionName = "2.0"
+                  versionCode = 3
+                  versionName = "3.0"
               }
 
               compileOptions {
@@ -93,7 +93,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest (Boot + Keepalive Foreground Permissions)
+          # 5. Manifest (Boot + Foreground Persistent Service + Haptics)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -102,7 +102,7 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.VIBRATE" />
 
               <application
                   android:allowBackup="true"
@@ -162,22 +162,22 @@ jobs:
 
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
-              <string name="app_name">Edge Display Morph</string>
-              <string name="service_description">Synchronizes real-time hardware button deflections with perimeter graphics.</string>
+              <string name="app_name">Bezel Morph Engine</string>
+              <string name="service_description">Hardware physical button perimeter synchronizer.</string>
           </resources>
           EOF
 
           cat << 'EOF' > app/src/main/res/values/styles.xml
           <resources>
               <style name="Theme.MorphEdge" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-                  <item name="android:windowBackground">#0B0B0B</item>
+                  <item name="android:windowBackground">#000000</item>
                   <item name="android:statusBarColor">#000000</item>
                   <item name="android:navigationBarColor">#000000</item>
               </style>
           </resources>
           EOF
 
-          # 7. Boot Completed Receiver
+          # 7. Boot Receiver
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BootCompletedReceiver.kt
           package com.edge.bezelmorph
 
@@ -187,18 +187,14 @@ jobs:
 
           class BootCompletedReceiver : BroadcastReceiver() {
               override fun onReceive(context: Context, intent: Intent) {
-                  // Accessibility services registered by the system persist across boot automatically.
-                  // This broadcast ensures preferences and component states are initialized immediately.
-                  if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == "android.intent.action.QUICKBOOT_POWERON") {
-                      val store = MorphConfigStore(context)
-                      // Trigger cache warmup
-                      val _unused = store.isLeftEdge
-                  }
+                  // Keep settings hot in flash memory
+                  val store = MorphConfigStore(context)
+                  val _unused = store.isLeftEdge
               }
           }
           EOF
 
-          # 8. Configuration Storage
+          # 8. Config Store
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -206,36 +202,39 @@ jobs:
           import android.content.SharedPreferences
 
           class MorphConfigStore(context: Context) {
-              private val prefs: SharedPreferences = context.getSharedPreferences("morph_settings", Context.MODE_PRIVATE)
+              private val prefs: SharedPreferences = context.getSharedPreferences("bezel_morph_pref", Context.MODE_PRIVATE)
 
               var volumeUpRatio: Float
-                  get() = prefs.getFloat("v_up_pos", 0.23f)
-                  set(v) = prefs.edit().putFloat("v_up_pos", v).apply()
+                  get() = prefs.getFloat("v_up_ratio", 0.235f)
+                  set(v) = prefs.edit().putFloat("v_up_ratio", v).apply()
 
               var volumeDownRatio: Float
-                  get() = prefs.getFloat("v_down_pos", 0.33f)
-                  set(v) = prefs.edit().putFloat("v_down_pos", v).apply()
+                  get() = prefs.getFloat("v_down_ratio", 0.335f)
+                  set(v) = prefs.edit().putFloat("v_down_ratio", v).apply()
 
               var lengthPx: Float
-                  get() = prefs.getFloat("btn_len", 160f)
-                  set(v) = prefs.edit().putFloat("btn_len", v).apply()
+                  get() = prefs.getFloat("bulge_len", 175f)
+                  set(v) = prefs.edit().putFloat("bulge_len", v).apply()
 
               var depthPx: Float
-                  get() = prefs.getFloat("btn_depth", 28f)
-                  set(v) = prefs.edit().putFloat("btn_depth", v).apply()
+                  get() = prefs.getFloat("bulge_dep", 26f)
+                  set(v) = prefs.edit().putFloat("bulge_dep", v).apply()
 
               var isLeftEdge: Boolean
-                  get() = prefs.getBoolean("is_left", true)
-                  set(v) = prefs.edit().putBoolean("is_left", v).apply()
+                  get() = prefs.getBoolean("is_left_side", true)
+                  set(v) = prefs.edit().putBoolean("is_left_side", v).apply()
           }
           EOF
 
-          # 9. Surface View with Bezier Arc and Specular Rim
+          # 9. Ultra-Accurate Squircle Pill Bezel Engine with Ambient Glass Specular Lip
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
           import android.content.Context
           import android.graphics.*
+          import android.os.Build
+          import android.os.VibrationEffect
+          import android.os.Vibrator
           import android.util.AttributeSet
           import android.view.View
           import androidx.dynamicanimation.animation.FloatPropertyCompat
@@ -249,110 +248,191 @@ jobs:
 
               var isLeftEdge: Boolean = true
               var centerY: Float = 400f
-              var bulgeLength: Float = 160f
-              var maxDepth: Float = 28f
+              var bulgeLength: Float = 175f
+              var maxDepth: Float = 26f
 
-              private var progress: Float = 0f
+              private var displacement: Float = 0f
+              private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+
               private val bodyPath = Path()
               private val rimPath = Path()
 
+              // Deep Pitch Black Core (Matches OLED border & physical frame)
               private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
               }
 
-              private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              // Drop shadow into content layer
+              private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  color = 0x55000000
+                  style = Paint.Style.FILL
+                  maskFilter = BlurMaskFilter(14f, BlurMaskFilter.Blur.NORMAL)
+              }
+
+              // Specular Glass Edge Arc (Glint along curvature)
+              private val specularRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.STROKE
-                  strokeWidth = 2.5f
+                  strokeWidth = 3.2f
                   strokeCap = Paint.Cap.ROUND
               }
 
-              private val springProp = object : FloatPropertyCompat<BezelSurfaceView>("morphProgress") {
-                  override fun getValue(v: BezelSurfaceView): Float = v.progress
+              private val animProp = object : FloatPropertyCompat<BezelSurfaceView>("displacement") {
+                  override fun getValue(v: BezelSurfaceView): Float = v.displacement
                   override fun setValue(v: BezelSurfaceView, value: Float) {
-                      v.progress = value
+                      v.displacement = value
                       v.invalidate()
                   }
               }
 
-              private val springAnim = SpringAnimation(this, springProp).apply {
+              // Spring tuned to 1400f stiffness with 0.62f damping
+              private val spring = SpringAnimation(this, animProp).apply {
                   spring = SpringForce().apply {
-                      dampingRatio = 0.58f
-                      stiffness = 950f
+                      dampingRatio = 0.62f
+                      stiffness = 1400f
                   }
               }
 
-              fun onKeyDownInstant() {
-                  springAnim.cancel()
-                  progress = 1.0f
+              fun onHardwareButtonDown() {
+                  spring.cancel()
+                  triggerHapticTick()
+                  // Push inward instantly with high impulse velocity
+                  displacement = 1.0f
                   invalidate()
               }
 
-              fun onKeyUpRelease() {
-                  springAnim.cancel()
-                  springAnim.setStartValue(progress)
-                  springAnim.animateToFinalPosition(0f)
+              fun onHardwareButtonUp() {
+                  spring.cancel()
+                  spring.setStartValue(displacement)
+                  spring.animateToFinalPosition(0f)
               }
 
-              fun setPreview(p: Float) {
-                  springAnim.cancel()
-                  progress = p
+              fun setPreviewStatic(value: Float) {
+                  spring.cancel()
+                  displacement = value
                   invalidate()
+              }
+
+              private fun triggerHapticTick() {
+                  try {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                          vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+                      } else {
+                          @Suppress("DEPRECATION")
+                          vibrator?.vibrate(10)
+                      }
+                  } catch (ignored: Exception) {}
               }
 
               override fun onDraw(canvas: Canvas) {
                   super.onDraw(canvas)
-                  if (progress <= 0.0001f) return
+                  if (displacement <= 0.0001f) return
 
                   val w = width.toFloat()
-                  val h = height.toFloat()
-                  val activeDepth = maxDepth * progress
+                  val currentDepth = maxDepth * displacement
+
+                  // Squircle geometry: A flat-crested pill center with G2 continuous tangent lead-ins
                   val halfLen = bulgeLength / 2f
-                  val topY = (centerY - halfLen).coerceAtLeast(0f)
-                  val botY = (centerY + halfLen).coerceAtMost(h)
+                  val crestHalf = halfLen * 0.38f // Flat crest matching button pill length
+                  val leadIn = halfLen - crestHalf
+
+                  val y0 = centerY - halfLen
+                  val y1 = centerY - crestHalf
+                  val y2 = centerY + crestHalf
+                  val y3 = centerY + halfLen
 
                   bodyPath.reset()
                   rimPath.reset()
 
-                  val cp1 = centerY - (halfLen * 0.42f)
-                  val cp2 = centerY + (halfLen * 0.42f)
-
                   if (isLeftEdge) {
-                      bodyPath.moveTo(0f, topY)
-                      bodyPath.cubicTo(activeDepth, cp1, activeDepth, cp2, 0f, botY)
-                      bodyPath.lineTo(0f, topY)
+                      // Lead-in cubic blend -> flat crest -> lead-out cubic blend
+                      bodyPath.moveTo(0f, y0)
+                      bodyPath.cubicTo(
+                          currentDepth * 0.15f, y0 + (leadIn * 0.60f),
+                          currentDepth, y1 - (leadIn * 0.25f),
+                          currentDepth, y1
+                      )
+                      bodyPath.lineTo(currentDepth, y2)
+                      bodyPath.cubicTo(
+                          currentDepth, y2 + (leadIn * 0.25f),
+                          currentDepth * 0.15f, y3 - (leadIn * 0.60f),
+                          0f, y3
+                      )
+                      bodyPath.lineTo(0f, y0)
+
+                      // Draw ambient shadow under curve
+                      canvas.drawPath(bodyPath, shadowPaint)
+                      // Draw solid OLED black core
                       canvas.drawPath(bodyPath, bodyPaint)
 
-                      rimPaint.shader = LinearGradient(
-                          0f, topY, activeDepth, centerY,
-                          intArrayOf(0x00FFFFFF, 0x4DFFFFFF, 0x00FFFFFF),
+                      // Specular refraction edge line
+                      specularRimPaint.shader = LinearGradient(
+                          0f, y0, currentDepth, centerY,
+                          intArrayOf(0x00FFFFFF, 0x66FFFFFF, 0x00FFFFFF),
                           floatArrayOf(0.0f, 0.5f, 1.0f),
                           Shader.TileMode.CLAMP
                       )
-                      rimPath.moveTo(0f, topY)
-                      rimPath.cubicTo(activeDepth, cp1, activeDepth, cp2, 0f, botY)
-                      canvas.drawPath(rimPath, rimPaint)
+                      specularRimPaint.alpha = (210 * displacement).toInt()
+
+                      rimPath.moveTo(0f, y0)
+                      rimPath.cubicTo(
+                          currentDepth * 0.15f, y0 + (leadIn * 0.60f),
+                          currentDepth, y1 - (leadIn * 0.25f),
+                          currentDepth, y1
+                      )
+                      rimPath.lineTo(currentDepth, y2)
+                      rimPath.cubicTo(
+                          currentDepth, y2 + (leadIn * 0.25f),
+                          currentDepth * 0.15f, y3 - (leadIn * 0.60f),
+                          0f, y3
+                      )
+                      canvas.drawPath(rimPath, specularRimPaint)
                   } else {
-                      bodyPath.moveTo(w, topY)
-                      bodyPath.cubicTo(w - activeDepth, cp1, w - activeDepth, cp2, w, botY)
-                      bodyPath.lineTo(w, topY)
+                      val xRight = w
+                      bodyPath.moveTo(xRight, y0)
+                      bodyPath.cubicTo(
+                          xRight - (currentDepth * 0.15f), y0 + (leadIn * 0.60f),
+                          xRight - currentDepth, y1 - (leadIn * 0.25f),
+                          xRight - currentDepth, y1
+                      )
+                      bodyPath.lineTo(xRight - currentDepth, y2)
+                      bodyPath.cubicTo(
+                          xRight - currentDepth, y2 + (leadIn * 0.25f),
+                          xRight - (currentDepth * 0.15f), y3 - (leadIn * 0.60f),
+                          xRight, y3
+                      )
+                      bodyPath.lineTo(xRight, y0)
+
+                      canvas.drawPath(bodyPath, shadowPaint)
                       canvas.drawPath(bodyPath, bodyPaint)
 
-                      rimPaint.shader = LinearGradient(
-                          w, topY, w - activeDepth, centerY,
-                          intArrayOf(0x00FFFFFF, 0x4DFFFFFF, 0x00FFFFFF),
+                      specularRimPaint.shader = LinearGradient(
+                          xRight, y0, xRight - currentDepth, centerY,
+                          intArrayOf(0x00FFFFFF, 0x66FFFFFF, 0x00FFFFFF),
                           floatArrayOf(0.0f, 0.5f, 1.0f),
                           Shader.TileMode.CLAMP
                       )
-                      rimPath.moveTo(w, topY)
-                      rimPath.cubicTo(w - activeDepth, cp1, w - activeDepth, cp2, w, botY)
-                      canvas.drawPath(rimPath, rimPaint)
+                      specularRimPaint.alpha = (210 * displacement).toInt()
+
+                      rimPath.moveTo(xRight, y0)
+                      rimPath.cubicTo(
+                          xRight - (currentDepth * 0.15f), y0 + (leadIn * 0.60f),
+                          xRight - currentDepth, y1 - (leadIn * 0.25f),
+                          xRight - currentDepth, y1
+                      )
+                      rimPath.lineTo(xRight - currentDepth, y2)
+                      rimPath.cubicTo(
+                          xRight - currentDepth, y2 + (leadIn * 0.25f),
+                          xRight - (currentDepth * 0.15f), y3 - (leadIn * 0.60f),
+                          xRight, y3
+                      )
+                      canvas.drawPath(rimPath, specularRimPaint)
                   }
               }
           }
           EOF
 
-          # 10. Crash-Proof Persistent Accessibility Service
+          # 10. Hardware Service with Low Latency Key Dispatcher
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -370,33 +450,32 @@ jobs:
               private var wm: WindowManager? = null
               private var overlay: BezelSurfaceView? = null
               private lateinit var store: MorphConfigStore
-              private var pressedKey: Int = 0
+              private var activeKey: Int = 0
 
               override fun onServiceConnected() {
                   super.onServiceConnected()
                   store = MorphConfigStore(this)
                   startPersistentForeground()
-                  setupOverlaySafely()
+                  attachOverlay()
               }
 
               private fun startPersistentForeground() {
-                  val channelId = "bezel_service_channel"
+                  val channelId = "bezel_channel_core"
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                       val channel = NotificationChannel(
                           channelId,
-                          "Edge Morph Service",
+                          "Morph Service",
                           NotificationManager.IMPORTANCE_MIN
                       ).apply {
-                          description = "Ensures zero latency edge deformation sync"
                           setShowBadge(false)
+                          enableVibration(false)
                       }
-                      val nm = getSystemService(NotificationManager::class.java)
-                      nm?.createNotificationChannel(channel)
+                      getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
                   }
 
                   val notification: Notification = NotificationCompat.Builder(this, channelId)
-                      .setContentTitle("Edge Morph Active")
-                      .setContentText("Hardware button monitor running")
+                      .setContentTitle("Perimeter Engine Active")
+                      .setContentText("Listening to hardware switches")
                       .setSmallIcon(android.R.drawable.ic_menu_crop)
                       .setPriority(NotificationCompat.PRIORITY_MIN)
                       .setOngoing(true)
@@ -405,11 +484,10 @@ jobs:
                   startForeground(1001, notification)
               }
 
-              private fun setupOverlaySafely() {
+              private fun attachOverlay() {
+                  if (overlay != null) return
                   try {
-                      if (overlay != null) return
                       wm = getSystemService(WINDOW_SERVICE) as WindowManager
-
                       val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                               WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                               WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -442,19 +520,19 @@ jobs:
 
                       if (event.action == KeyEvent.ACTION_DOWN) {
                           if (event.repeatCount == 0) {
-                              pressedKey = code
-                              overlay?.let {
-                                  it.isLeftEdge = store.isLeftEdge
-                                  it.bulgeLength = store.lengthPx
-                                  it.maxDepth = store.depthPx
-                                  it.centerY = it.height * ratio
-                                  it.onKeyDownInstant()
+                              activeKey = code
+                              overlay?.let { view ->
+                                  view.isLeftEdge = store.isLeftEdge
+                                  view.bulgeLength = store.lengthPx
+                                  view.maxDepth = store.depthPx
+                                  view.centerY = view.height * ratio
+                                  view.onHardwareButtonDown()
                               }
                           }
                       } else if (event.action == KeyEvent.ACTION_UP) {
-                          if (pressedKey == code) {
-                              pressedKey = 0
-                              overlay?.onKeyUpRelease()
+                          if (activeKey == code) {
+                              activeKey = 0
+                              overlay?.onHardwareButtonUp()
                           }
                       }
                   }
@@ -466,14 +544,12 @@ jobs:
 
               override fun onDestroy() {
                   super.onDestroy()
-                  try {
-                      overlay?.let { wm?.removeView(it) }
-                  } catch (ignored: Exception) {}
+                  try { overlay?.let { wm?.removeView(it) } } catch (ignored: Exception) {}
               }
           }
           EOF
 
-          # 11. Main Activity (Auto-Hides Permission UI Once Activated)
+          # 11. Customizer Activity with Live Bezel Interaction & Auto-Vanishing Setup UI
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -491,79 +567,79 @@ jobs:
           class MainActivity : AppCompatActivity() {
               private lateinit var store: MorphConfigStore
               private lateinit var preview: BezelSurfaceView
-              private var permissionButton: Button? = null
+              private var accessButton: Button? = null
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   store = MorphConfigStore(this)
 
-                  val root = FrameLayout(this).apply { setBackgroundColor(0xFF0A0A0A.toInt()) }
+                  val container = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
                   preview = BezelSurfaceView(this).apply {
                       isLeftEdge = store.isLeftEdge
                       bulgeLength = store.lengthPx
                       maxDepth = store.depthPx
                   }
-                  root.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                  container.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
                   val scroll = ScrollView(this).apply {
-                      setBackgroundColor(0xDD181818.toInt())
-                      setPadding(32, 24, 32, 24)
+                      setBackgroundColor(0xDD121212.toInt())
+                      setPadding(36, 24, 36, 32)
                   }
-                  val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-                  val heading = TextView(this).apply {
-                      text = "Edge Alignment Controls"
+                  val title = TextView(this).apply {
+                      text = "Bezel Physical Alignment"
                       setTextColor(0xFFFFFFFF.toInt())
                       textSize = 18f
                       setPadding(0, 0, 0, 16)
                   }
-                  panel.addView(heading)
+                  content.addView(title)
 
-                  val toggle = Switch(this).apply {
-                      text = "Position: Left Edge"
-                      setTextColor(0xFFEEEEEE.toInt())
+                  val edgeSwitch = Switch(this).apply {
+                      text = if (store.isLeftEdge) "Side: Left Edge" else "Side: Right Edge"
+                      setTextColor(0xFFCCCCCC.toInt())
                       isChecked = store.isLeftEdge
                       setOnCheckedChangeListener { _, checked ->
                           store.isLeftEdge = checked
-                          text = if (checked) "Position: Left Edge" else "Position: Right Edge"
-                          refresh(store.volumeUpRatio)
+                          text = if (checked) "Side: Left Edge" else "Side: Right Edge"
+                          updatePreview()
                       }
                   }
-                  panel.addView(toggle)
+                  content.addView(edgeSwitch)
 
-                  panel.addView(addSlider("Key 1 Position", (store.volumeUpRatio * 1000).toInt(), 50, 950) {
+                  content.addView(buildSlider("Button 1 Position", (store.volumeUpRatio * 1000).toInt(), 50, 950) {
                       store.volumeUpRatio = it / 1000f
                       preview.centerY = preview.height * store.volumeUpRatio
-                      preview.setPreview(1.0f)
+                      preview.setPreviewStatic(1.0f)
                   })
 
-                  panel.addView(addSlider("Key 2 Position", (store.volumeDownRatio * 1000).toInt(), 50, 950) {
+                  content.addView(buildSlider("Button 2 Position", (store.volumeDownRatio * 1000).toInt(), 50, 950) {
                       store.volumeDownRatio = it / 1000f
                       preview.centerY = preview.height * store.volumeDownRatio
-                      preview.setPreview(1.0f)
+                      preview.setPreviewStatic(1.0f)
                   })
 
-                  panel.addView(addSlider("Profile Length", store.lengthPx.toInt(), 70, 360) {
+                  content.addView(buildSlider("Button Height (Length)", store.lengthPx.toInt(), 80, 380) {
                       store.lengthPx = it.toFloat()
-                      refresh(store.volumeUpRatio)
+                      updatePreview()
                   })
 
-                  panel.addView(addSlider("Deflection Depth", store.depthPx.toInt(), 10, 60) {
+                  content.addView(buildSlider("Morph Depth (Intrusion)", store.depthPx.toInt(), 8, 65) {
                       store.depthPx = it.toFloat()
-                      refresh(store.volumeUpRatio)
+                      updatePreview()
                   })
 
-                  permissionButton = Button(this).apply {
+                  accessButton = Button(this).apply {
                       text = "Grant System Access"
-                      setBackgroundColor(0xFF2B5BE6.toInt())
+                      setBackgroundColor(0xFF2E66FF.toInt())
                       setTextColor(0xFFFFFFFF.toInt())
                       setOnClickListener {
                           startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                       }
                   }
-                  panel.addView(permissionButton)
+                  content.addView(accessButton)
 
-                  scroll.addView(panel)
+                  scroll.addView(content)
                   val cardParams = FrameLayout.LayoutParams(
                       FrameLayout.LayoutParams.MATCH_PARENT,
                       FrameLayout.LayoutParams.WRAP_CONTENT
@@ -571,71 +647,69 @@ jobs:
                       gravity = Gravity.BOTTOM
                       setMargins(24, 0, 24, 48)
                   }
-                  root.addView(scroll, cardParams)
+                  container.addView(scroll, cardParams)
 
-                  setContentView(root)
+                  setContentView(container)
               }
 
               override fun onResume() {
                   super.onResume()
-                  checkAndHidePermissionLayout()
-                  refresh(store.volumeUpRatio)
+                  checkPermissionState()
+                  updatePreview()
               }
 
-              private fun checkAndHidePermissionLayout() {
-                  if (isAccessibilityEnabled()) {
-                      // Disappears from UI completely once enabled
-                      permissionButton?.visibility = View.GONE
+              private fun checkPermissionState() {
+                  if (isServiceRunning()) {
+                      accessButton?.visibility = View.GONE
                   } else {
-                      permissionButton?.visibility = View.VISIBLE
+                      accessButton?.visibility = View.VISIBLE
                   }
               }
 
-              private fun isAccessibilityEnabled(): Boolean {
+              private fun isServiceRunning(): Boolean {
                   val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-                  val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                  for (service in enabledServices) {
-                      if (service.id.contains(packageName)) {
-                          return true
-                      }
+                  val services = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                  for (s in services) {
+                      if (s.id.contains(packageName)) return true
                   }
                   return false
               }
 
-              private fun addSlider(title: String, initial: Int, minVal: Int, maxVal: Int, onChange: (Int) -> Unit): LinearLayout {
-                  val layout = LinearLayout(this).apply {
+              private fun buildSlider(name: String, current: Int, min: Int, max: Int, onVal: (Int) -> Unit): LinearLayout {
+                  val box = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      setPadding(0, 8, 0, 8)
+                      setPadding(0, 10, 0, 10)
                   }
                   val txt = TextView(this).apply {
-                      text = "$title: $initial"
-                      setTextColor(0xFFCCCCCC.toInt())
+                      text = "$name: $current"
+                      setTextColor(0xFFB0B0B0.toInt())
+                      textSize = 13f
                   }
-                  val seek = SeekBar(this).apply {
-                      max = maxVal - minVal
-                      progress = initial - minVal
+                  val bar = SeekBar(this).apply {
+                      this.max = max - min
+                      this.progress = current - min
                       setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                          override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                              val v = p + minVal
-                              txt.text = "$title: $v"
-                              onChange(v)
+                          override fun onProgressChanged(b: SeekBar?, p: Int, fromUser: Boolean) {
+                              val real = p + min
+                              txt.text = "$name: $real"
+                              onVal(real)
                           }
-                          override fun onStartTrackingTouch(s: SeekBar?) {}
-                          override fun onStopTrackingTouch(s: SeekBar?) { preview.setPreview(0f) }
+                          override fun onStartTrackingTouch(b: SeekBar?) {}
+                          override fun onStopTrackingTouch(b: SeekBar?) { preview.setPreviewStatic(0f) }
                       })
                   }
-                  layout.addView(txt)
-                  layout.addView(seek)
-                  return layout
+                  box.addView(txt)
+                  box.addView(bar)
+                  return box
               }
 
-              private fun refresh(ratio: Float) {
+              private fun updatePreview() {
                   preview.isLeftEdge = store.isLeftEdge
                   preview.bulgeLength = store.lengthPx
                   preview.maxDepth = store.depthPx
                   preview.post {
-                      preview.centerY = preview.height * ratio
-                      preview.setPreview(1.0f)
+                      preview.centerY = preview.height * store.volumeUpRatio
+                      preview.setPreviewStatic(1.0f)
                   }
               }
           }
@@ -649,8 +723,8 @@ jobs:
       - name: Compile Debug APK
         run: gradle assembleDebug --stacktrace --no-daemon
 
-      - name: Upload Finished Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EdgeMorph-APK
+          name: BezelMorph-Engine-APK
           path: app/build/outputs/apk/debug/app-debug.apk
