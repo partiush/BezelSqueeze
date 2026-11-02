@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 28
                   targetSdk = 34
-                  versionCode = 13
-                  versionName = "13.0"
+                  versionCode = 14
+                  versionName = "14.0"
               }
 
               compileOptions {
@@ -92,7 +92,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest (Zero-Latency Flag + Foreground Persistence + Boot)
+          # 5. Manifest (Notch Bypass + Foreground Service + WakeLock)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -195,7 +195,7 @@ jobs:
           }
           EOF
 
-          # 8. Config Store with In-Memory Key Caching
+          # 8. Config Store with Fast In-Memory Key Routing
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -216,7 +216,6 @@ jobs:
           class MorphConfigStore(context: Context) {
               private val prefs: SharedPreferences = context.getSharedPreferences("bezel_morph_pref", Context.MODE_PRIVATE)
 
-              // Fast RAM cache for instant 0-latency key routing
               private var cachedKeyMap: SparseArray<KeyItem>? = null
 
               var flatTopHalfLengthY0: Float
@@ -228,15 +227,15 @@ jobs:
                   set(v) = prefs.edit().putFloat("w_val", v).apply()
 
               var peakAmplitudeA: Float
-                  get() = prefs.getFloat("peak_amp_A", 52f)
+                  get() = prefs.getFloat("peak_amp_A", 54f)
                   set(v) = prefs.edit().putFloat("peak_amp_A", v).apply()
 
               var speedOverall: Float
-                  get() = prefs.getFloat("speed_omega", 34.0f) // Calibrated default natural frequency
+                  get() = prefs.getFloat("speed_omega", 36.0f)
                   set(v) = prefs.edit().putFloat("speed_omega", v).apply()
 
               var inwardImpulse: Float
-                  get() = prefs.getFloat("speed_inward", 1250f) // Sharp instant velocity
+                  get() = prefs.getFloat("speed_inward", 1400f)
                   set(v) = prefs.edit().putFloat("speed_inward", v).apply()
 
               var outwardDamping: Float
@@ -247,17 +246,18 @@ jobs:
                   get() = prefs.getBoolean("is_left_side", false)
                   set(v) = prefs.edit().putBoolean("is_left_side", v).apply()
 
+              // Modern Optics Controls
               var bodyColor: Int
                   get() = prefs.getInt("body_color", 0xFF000000.toInt())
                   set(v) = prefs.edit().putInt("body_color", v).apply()
 
-              var rimColor: Int
-                  get() = prefs.getInt("rim_color", 0x88FFFFFF.toInt())
-                  set(v) = prefs.edit().putInt("rim_color", v).apply()
+              var enableGlassRefraction: Boolean
+                  get() = prefs.getBoolean("enable_glass_refraction", true)
+                  set(v) = prefs.edit().putBoolean("enable_glass_refraction", v).apply()
 
-              var enableAdaptiveRim: Boolean
-                  get() = prefs.getBoolean("enable_adaptive_rim", true)
-                  set(v) = prefs.edit().putBoolean("enable_adaptive_rim", v).apply()
+              var refractionGlowColor: Int
+                  get() = prefs.getInt("refraction_glow_color", 0x99FFFFFF.toInt())
+                  set(v) = prefs.edit().putInt("refraction_glow_color", v).apply()
 
               @Synchronized
               fun getKeyForCodeFast(keyCode: Int): KeyItem? {
@@ -321,7 +321,7 @@ jobs:
           }
           EOF
 
-          # 9. Pressure-Sensitive Dynamic Impulse Stacking Engine
+          # 9. Pure Native 0-Latency Optics & Harmonic Engine
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -345,53 +345,62 @@ jobs:
 
               var y0: Float = 50f
               var w: Float = 85f
-              var A: Float = 52f
+              var A: Float = 54f
 
-              var omegaN: Float = 34.0f
-              var inwardVelocity: Float = 1250f
+              var omegaN: Float = 36.0f
+              var inwardVelocity: Float = 1400f
               var zeta: Float = 0.76f
 
               var bodyColor: Int = 0xFF000000.toInt()
-              var rimColor: Int = 0x88FFFFFF.toInt()
-              var enableAdaptiveRim: Boolean = true
+              var enableGlassRefraction: Boolean = true
+              var refractionGlowColor: Int = 0x99FFFFFF.toInt()
 
-              // Physical State Variables
+              // Numerical physical state
               private var currentA: Float = 0f
               private var velocityA: Float = 0f
               private var targetA: Float = 0f
               private var isSimulating: Boolean = false
               private var lastFrameTimeNs: Long = 0L
 
-              // Pressure sensitivity factor (boosts peak depth on rapid multi-taps)
-              private var pressureBoost: Float = 1.0f
+              // Pressure factor accumulates on rapid bursts
+              private var pressureMultiplier: Float = 1.0f
 
               private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
               private val choreographer = Choreographer.getInstance()
 
               private val morphPath = Path()
-              private val rimPath = Path()
+              private val specularPath = Path()
+              private val shadowPath = Path()
 
-              private val bezelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              // 100% Solid OLED Bezel
+              private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.FILL
               }
 
-              private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              // Dynamic Ambient Shading for dark & light wallpaper contrast
+              private val ambientShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  color = 0x66000000
+                  style = Paint.Style.FILL
+                  maskFilter = BlurMaskFilter(16f, BlurMaskFilter.Blur.NORMAL)
+              }
+
+              // Specular Glass Refraction Shimmer
+              private val specularGlassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.STROKE
-                  strokeWidth = 3.2f
+                  strokeWidth = 3.6f
                   strokeCap = Paint.Cap.ROUND
               }
 
               fun onHardwareButtonDown() {
-                  // Momentum stacking: fast consecutive taps accumulate inward kinetic velocity
-                  if (velocityA > 0f || currentA > 5f) {
-                      pressureBoost = (pressureBoost + 0.18f).coerceAtMost(1.45f)
-                      velocityA += inwardVelocity * pressureBoost
+                  if (velocityA > 0f || currentA > 4f) {
+                      pressureMultiplier = (pressureMultiplier + 0.18f).coerceAtMost(1.45f)
+                      velocityA += inwardVelocity * pressureMultiplier
                   } else {
-                      pressureBoost = 1.0f
+                      pressureMultiplier = 1.0f
                       velocityA = inwardVelocity
                   }
 
-                  targetA = A * pressureBoost
+                  targetA = A * pressureMultiplier
                   triggerHaptic()
                   startSimulation()
               }
@@ -426,22 +435,21 @@ jobs:
                   val dt = if (lastFrameTimeNs > 0L) {
                       ((frameTimeNs - lastFrameTimeNs) / 1_000_000_000f).coerceIn(0.003f, 0.020f)
                   } else {
-                      0.008f // Instant microsecond seed
+                      0.008f
                   }
                   lastFrameTimeNs = frameTimeNs
 
-                  // Damped Harmonic Oscillator (Zero-delay integration)
+                  // 2nd-order harmonic spring oscillator
                   val displacement = currentA - targetA
                   val accel = -(omegaN * omegaN * displacement) - (2f * zeta * omegaN * velocityA)
 
                   velocityA += accel * dt
                   currentA += velocityA * dt
 
-                  // Zero settling threshold: immediate clean stop
-                  if (targetA == 0f && abs(velocityA) < 0.25f && abs(currentA) < 0.25f) {
+                  if (targetA == 0f && abs(velocityA) < 0.2f && abs(currentA) < 0.2f) {
                       currentA = 0f
                       velocityA = 0f
-                      pressureBoost = 1.0f
+                      pressureMultiplier = 1.0f
                       isSimulating = false
                       invalidate()
                       return
@@ -472,18 +480,18 @@ jobs:
                   val yBottom = centerY + totalHalfSpan
 
                   morphPath.reset()
-                  rimPath.reset()
+                  specularPath.reset()
+                  shadowPath.reset()
 
-                  // Fast Horner's method evaluation avoids Math.pow() CPU overhead in the 120Hz render pass
-                  val steps = 60
+                  val steps = 64
                   val stepSize = (2f * totalHalfSpan) / steps
                   val invW = 1.0f / w
 
-                  bezelPaint.color = bodyColor
+                  corePaint.color = bodyColor
 
                   if (isLeftEdge) {
                       morphPath.moveTo(0f, yTop)
-                      rimPath.moveTo(0f, yTop)
+                      specularPath.moveTo(0f, yTop)
                       for (i in 0..steps) {
                           val curY = yTop + (i * stepSize)
                           val dist = abs(curY - centerY)
@@ -491,7 +499,6 @@ jobs:
                               dist <= y0 -> currentA
                               dist < totalHalfSpan -> {
                                   val u = (dist - y0) * invW
-                                  // Horner's form: u^3 * (10 - 15u + 6u^2)
                                   val u2 = u * u
                                   val u3 = u2 * u
                                   val poly = 1.0f - (u3 * (10.0f - (15.0f * u) + (6.0f * u2)))
@@ -500,22 +507,32 @@ jobs:
                               else -> 0f
                           }
                           morphPath.lineTo(x, curY)
-                          rimPath.lineTo(x, curY)
+                          specularPath.lineTo(x, curY)
                       }
                       morphPath.lineTo(0f, yBottom)
                       morphPath.close()
 
-                      canvas.drawPath(morphPath, bezelPaint)
+                      // 1. Soft Ambient Depth
+                      canvas.drawPath(morphPath, ambientShadowPaint)
+                      // 2. Pure OLED Solid Body
+                      canvas.drawPath(morphPath, corePaint)
 
-                      if (enableAdaptiveRim) {
-                          rimPaint.color = rimColor
-                          rimPaint.alpha = (Color.alpha(rimColor) * (currentA / A).coerceIn(0f, 1f)).toInt()
-                          canvas.drawPath(rimPath, rimPaint)
+                      // 3. Modern Specular Refraction Shimmer
+                      if (enableGlassRefraction) {
+                          val ratio = (currentA / A).coerceIn(0f, 1f)
+                          specularGlassPaint.shader = LinearGradient(
+                              0f, yTop, currentA, centerY,
+                              intArrayOf(0x00FFFFFF, refractionGlowColor, 0x00FFFFFF),
+                              floatArrayOf(0.0f, 0.5f, 1.0f),
+                              Shader.TileMode.CLAMP
+                          )
+                          specularGlassPaint.alpha = (235 * ratio).toInt()
+                          canvas.drawPath(specularPath, specularGlassPaint)
                       }
                   } else {
                       val xEdge = screenW
                       morphPath.moveTo(xEdge, yTop)
-                      rimPath.moveTo(xEdge, yTop)
+                      specularPath.moveTo(xEdge, yTop)
                       for (i in 0..steps) {
                           val curY = yTop + (i * stepSize)
                           val dist = abs(curY - centerY)
@@ -531,24 +548,31 @@ jobs:
                               else -> 0f
                           }
                           morphPath.lineTo(xEdge - x, curY)
-                          rimPath.lineTo(xEdge - x, curY)
+                          specularPath.lineTo(xEdge - x, curY)
                       }
                       morphPath.lineTo(xEdge, yBottom)
                       morphPath.close()
 
-                      canvas.drawPath(morphPath, bezelPaint)
+                      canvas.drawPath(morphPath, ambientShadowPaint)
+                      canvas.drawPath(morphPath, corePaint)
 
-                      if (enableAdaptiveRim) {
-                          rimPaint.color = rimColor
-                          rimPaint.alpha = (Color.alpha(rimColor) * (currentA / A).coerceIn(0f, 1f)).toInt()
-                          canvas.drawPath(rimPath, rimPaint)
+                      if (enableGlassRefraction) {
+                          val ratio = (currentA / A).coerceIn(0f, 1f)
+                          specularGlassPaint.shader = LinearGradient(
+                              xEdge, yTop, xEdge - currentA, centerY,
+                              intArrayOf(0x00FFFFFF, refractionGlowColor, 0x00FFFFFF),
+                              floatArrayOf(0.0f, 0.5f, 1.0f),
+                              Shader.TileMode.CLAMP
+                          )
+                          specularGlassPaint.alpha = (235 * ratio).toInt()
+                          canvas.drawPath(specularPath, specularGlassPaint)
                       }
                   }
               }
           }
           EOF
 
-          # 10. Hardware Service with RAM Cache Event Dispatcher
+          # 10. Direct Hardware Accessibility Hook
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -571,7 +595,7 @@ jobs:
               override fun onServiceConnected() {
                   super.onServiceConnected()
                   store = MorphConfigStore(this)
-                  store.loadKeys() // Preload into RAM cache
+                  store.loadKeys()
                   startPersistentForeground()
                   attachOverlay()
               }
@@ -636,8 +660,8 @@ jobs:
                           inwardVelocity = store.inwardImpulse
                           zeta = store.outwardDamping
                           bodyColor = store.bodyColor
-                          rimColor = store.rimColor
-                          enableAdaptiveRim = store.enableAdaptiveRim
+                          enableGlassRefraction = store.enableGlassRefraction
+                          refractionGlowColor = store.refractionGlowColor
                       }
                       wm?.addView(overlay, params)
                   } catch (e: Exception) {
@@ -647,13 +671,10 @@ jobs:
 
               override fun onKeyEvent(event: KeyEvent): Boolean {
                   val code = event.keyCode
-
-                  // 0-delay lookup in RAM cache (eliminates JSON parsing and disk I/O on key events)
                   val matched = store.getKeyForCodeFast(code)
 
                   if (matched != null) {
                       if (event.action == KeyEvent.ACTION_DOWN) {
-                          // Allow repeatCount triggers to support rapid multi-tapping and continuous hold
                           activeKey = code
                           overlay?.let { view ->
                               view.isLeftEdge = matched.isLeftEdge
@@ -664,8 +685,8 @@ jobs:
                               view.inwardVelocity = store.inwardImpulse
                               view.zeta = store.outwardDamping
                               view.bodyColor = store.bodyColor
-                              view.rimColor = store.rimColor
-                              view.enableAdaptiveRim = store.enableAdaptiveRim
+                              view.enableGlassRefraction = store.enableGlassRefraction
+                              view.refractionGlowColor = store.refractionGlowColor
                               view.centerY = view.height * matched.ratio
                               view.onHardwareButtonDown()
                           }
@@ -689,7 +710,7 @@ jobs:
           }
           EOF
 
-          # 11. MainActivity with Live Tuning
+          # 11. Full-Screen Interactive Live HUD Activity
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -709,7 +730,7 @@ jobs:
 
           class MainActivity : AppCompatActivity() {
               private lateinit var store: MorphConfigStore
-              private lateinit var preview: BezelSurfaceView
+              private lateinit var fullScreenPreview: BezelSurfaceView
               private var accessButton: Button? = null
               private lateinit var keysContainer: LinearLayout
               private var keyList = mutableListOf<KeyItem>()
@@ -719,8 +740,13 @@ jobs:
                   store = MorphConfigStore(this)
                   keyList = store.loadKeys()
 
-                  val container = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
-                  preview = BezelSurfaceView(this).apply {
+                  // Full screen container
+                  val root = FrameLayout(this).apply {
+                      setBackgroundColor(0xFF000000.toInt())
+                  }
+
+                  // Live Bezel Surface directly covers the entire screen behind the HUD
+                  fullScreenPreview = BezelSurfaceView(this).apply {
                       isLeftEdge = store.isLeftEdge
                       y0 = store.flatTopHalfLengthY0
                       w = store.blendTransitionW
@@ -729,134 +755,135 @@ jobs:
                       inwardVelocity = store.inwardImpulse
                       zeta = store.outwardDamping
                       bodyColor = store.bodyColor
-                      rimColor = store.rimColor
-                      enableAdaptiveRim = store.enableAdaptiveRim
+                      enableGlassRefraction = store.enableGlassRefraction
+                      refractionGlowColor = store.refractionGlowColor
                   }
-                  container.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                  root.addView(fullScreenPreview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
-                  val scroll = ScrollView(this).apply {
-                      setBackgroundColor(0xEE111111.toInt())
-                      setPadding(32, 24, 32, 32)
+                  // Translucent Floating Card HUD
+                  val hudScroll = ScrollView(this).apply {
+                      setBackgroundColor(0xD9101010.toInt())
+                      setPadding(32, 28, 32, 32)
                   }
-                  val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  val hudContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
                   val title = TextView(this).apply {
-                      text = "Zero-Latency Bezel Engine"
+                      text = "Full-Screen Real-Time Tuning"
                       setTextColor(0xFFFFFFFF.toInt())
                       textSize = 19f
                       setPadding(0, 0, 0, 16)
                   }
-                  content.addView(title)
+                  hudContent.addView(title)
 
-                  // Geometry Sliders
-                  content.addView(buildSlider("Flat Key Plateau (y0)", store.flatTopHalfLengthY0.toInt(), 20, 140) {
+                  // Geometry Controls with instantaneous full-screen feedback
+                  hudContent.addView(buildLiveSlider("Flat Key Plateau (y0)", store.flatTopHalfLengthY0.toInt(), 20, 140) {
                       store.flatTopHalfLengthY0 = it.toFloat()
-                      updatePreview()
+                      syncAndPreview()
                   })
 
-                  content.addView(buildSlider("Shoulder Blend Width (w)", store.blendTransitionW.toInt(), 30, 200) {
+                  hudContent.addView(buildLiveSlider("Shoulder Blend Width (w)", store.blendTransitionW.toInt(), 30, 200) {
                       store.blendTransitionW = it.toFloat()
-                      updatePreview()
+                      syncAndPreview()
                   })
 
-                  content.addView(buildSlider("Peak Intrusion (A)", store.peakAmplitudeA.toInt(), 15, 120) {
+                  hudContent.addView(buildLiveSlider("Peak Intrusion (A)", store.peakAmplitudeA.toInt(), 15, 120) {
                       store.peakAmplitudeA = it.toFloat()
-                      updatePreview()
+                      syncAndPreview()
                   })
 
-                  // Speed & Recoil Sliders
+                  // Speed & Kinetics
                   val physicsHeader = TextView(this).apply {
-                      text = "Dynamic Speed & Impulse Sliders"
+                      text = "Speed & Spring Dynamics"
                       setTextColor(0xFF5389FF.toInt())
                       textSize = 15f
                       setPadding(0, 16, 0, 8)
                   }
-                  content.addView(physicsHeader)
+                  hudContent.addView(physicsHeader)
 
-                  content.addView(buildSlider("Natural Frequency (Speed)", store.speedOverall.toInt(), 15, 60) {
+                  hudContent.addView(buildLiveSlider("Frequency (Total Speed)", store.speedOverall.toInt(), 15, 60) {
                       store.speedOverall = it.toFloat()
-                      preview.omegaN = store.speedOverall
+                      fullScreenPreview.omegaN = store.speedOverall
                   })
 
-                  content.addView(buildSlider("Inward Impulse Velocity", (store.inwardImpulse / 10).toInt(), 50, 250) {
+                  hudContent.addView(buildLiveSlider("Inward Impulse Velocity", (store.inwardImpulse / 10).toInt(), 50, 250) {
                       store.inwardImpulse = (it * 10).toFloat()
-                      preview.inwardVelocity = store.inwardImpulse
+                      fullScreenPreview.inwardVelocity = store.inwardImpulse
                   })
 
-                  content.addView(buildSlider("Outward Recoil Damping", (store.outwardDamping * 100).toInt(), 50, 98) {
+                  hudContent.addView(buildLiveSlider("Outward Recoil Damping", (store.outwardDamping * 100).toInt(), 50, 98) {
                       store.outwardDamping = it / 100f
-                      preview.zeta = store.outwardDamping
+                      fullScreenPreview.zeta = store.outwardDamping
                   })
 
-                  // Color & Adaptive Bezel Settings
-                  val colorHeader = TextView(this).apply {
-                      text = "Color & Adaptive Contrast"
+                  // Modern Glass Optics
+                  val opticsHeader = TextView(this).apply {
+                      text = "Modern Glass Optics"
                       setTextColor(0xFF5389FF.toInt())
                       textSize = 15f
                       setPadding(0, 16, 0, 8)
                   }
-                  content.addView(colorHeader)
+                  hudContent.addView(opticsHeader)
 
-                  val adaptiveRimToggle = Switch(this).apply {
-                      text = "Adaptive Rim Visibility (For Pitch Black Backgrounds)"
+                  val refractionToggle = Switch(this).apply {
+                      text = "Ambient Glass Refraction (Modern Specular Lip)"
                       setTextColor(0xFFE0E0E0.toInt())
-                      isChecked = store.enableAdaptiveRim
+                      isChecked = store.enableGlassRefraction
                       setOnCheckedChangeListener { _, checked ->
-                          store.enableAdaptiveRim = checked
-                          preview.enableAdaptiveRim = checked
-                          updatePreview()
+                          store.enableGlassRefraction = checked
+                          fullScreenPreview.enableGlassRefraction = checked
+                          syncAndPreview()
                       }
                   }
-                  content.addView(adaptiveRimToggle)
+                  hudContent.addView(refractionToggle)
+
+                  val btnGlowColor = Button(this).apply {
+                      text = "Customize Specular Glass Tint"
+                      setBackgroundColor(0xFF222222.toInt())
+                      setTextColor(0xFFFFFFFF.toInt())
+                      setOnClickListener {
+                          showColorPicker("Select Refraction Glint Tint") { chosen ->
+                              store.refractionGlowColor = chosen
+                              fullScreenPreview.refractionGlowColor = chosen
+                              syncAndPreview()
+                          }
+                      }
+                  }
+                  hudContent.addView(btnGlowColor)
 
                   val btnBodyColor = Button(this).apply {
-                      text = "Customize Inward Body Color"
+                      text = "Customize OLED Body Color"
                       setBackgroundColor(0xFF222222.toInt())
                       setTextColor(0xFFFFFFFF.toInt())
                       setOnClickListener {
-                          showColorPicker("Select Inward Body Color") { chosen ->
+                          showColorPicker("Select Inward OLED Body Color") { chosen ->
                               store.bodyColor = chosen
-                              preview.bodyColor = chosen
-                              updatePreview()
+                              fullScreenPreview.bodyColor = chosen
+                              syncAndPreview()
                           }
                       }
                   }
-                  content.addView(btnBodyColor)
+                  hudContent.addView(btnBodyColor)
 
-                  val btnRimColor = Button(this).apply {
-                      text = "Customize Outward Rim Color"
-                      setBackgroundColor(0xFF222222.toInt())
-                      setTextColor(0xFFFFFFFF.toInt())
-                      setOnClickListener {
-                          showColorPicker("Select Outward Rim Color") { chosen ->
-                              store.rimColor = chosen
-                              preview.rimColor = chosen
-                              updatePreview()
-                          }
-                      }
-                  }
-                  content.addView(btnRimColor)
-
-                  // Custom Keys Management
+                  // Hardware Key List
                   val keysHeader = TextView(this).apply {
-                      text = "Hardware Key Mappings"
+                      text = "Hardware Button Positions"
                       setTextColor(0xFF5389FF.toInt())
                       textSize = 15f
                       setPadding(0, 16, 0, 8)
                   }
-                  content.addView(keysHeader)
+                  hudContent.addView(keysHeader)
 
                   keysContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-                  content.addView(keysContainer)
+                  hudContent.addView(keysContainer)
                   renderKeyList()
 
                   val btnAddKey = Button(this).apply {
-                      text = "+ Add New Physical Key / Mute Switch"
+                      text = "+ Add New Physical Key"
                       setBackgroundColor(0xFF1B5E20.toInt())
                       setTextColor(0xFFFFFFFF.toInt())
                       setOnClickListener { showAddKeyDialog() }
                   }
-                  content.addView(btnAddKey)
+                  hudContent.addView(btnAddKey)
 
                   accessButton = Button(this).apply {
                       text = "Grant System Access"
@@ -866,25 +893,25 @@ jobs:
                           startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                       }
                   }
-                  content.addView(accessButton)
+                  hudContent.addView(accessButton)
 
-                  scroll.addView(content)
+                  hudScroll.addView(hudContent)
                   val cardParams = FrameLayout.LayoutParams(
                       FrameLayout.LayoutParams.MATCH_PARENT,
-                      FrameLayout.LayoutParams.WRAP_CONTENT
+                      (resources.displayMetrics.heightPixels * 0.58).toInt()
                   ).apply {
                       gravity = Gravity.BOTTOM
                       setMargins(20, 0, 20, 40)
                   }
-                  container.addView(scroll, cardParams)
+                  root.addView(hudScroll, cardParams)
 
-                  setContentView(container)
+                  setContentView(root)
               }
 
               override fun onResume() {
                   super.onResume()
                   checkPermissionState()
-                  updatePreview()
+                  syncAndPreview()
               }
 
               private fun checkPermissionState() {
@@ -910,7 +937,7 @@ jobs:
                       val row = LinearLayout(this).apply {
                           orientation = LinearLayout.VERTICAL
                           setPadding(16, 16, 16, 16)
-                          setBackgroundColor(0xFF1E1E1E.toInt())
+                          setBackgroundColor(0xFF1B1B1B.toInt())
                           val lp = LinearLayout.LayoutParams(
                               LinearLayout.LayoutParams.MATCH_PARENT,
                               LinearLayout.LayoutParams.WRAP_CONTENT
@@ -959,19 +986,19 @@ jobs:
                               key.isLeftEdge = c
                               text = if (c) "Edge: Left" else "Edge: Right"
                               store.saveKeys(keyList)
-                              preview.isLeftEdge = c
-                              preview.centerY = preview.height * key.ratio
-                              preview.setPreviewStatic(1.0f)
+                              fullScreenPreview.isLeftEdge = c
+                              fullScreenPreview.centerY = fullScreenPreview.height * key.ratio
+                              fullScreenPreview.setPreviewStatic(1.0f)
                           }
                       }
                       row.addView(sideToggle)
 
-                      row.addView(buildSlider("Position (${key.name})", (key.ratio * 1000).toInt(), 50, 950) { p ->
+                      row.addView(buildLiveSlider("Position (${key.name})", (key.ratio * 1000).toInt(), 50, 950) { p ->
                           key.ratio = p / 1000f
                           store.saveKeys(keyList)
-                          preview.isLeftEdge = key.isLeftEdge
-                          preview.centerY = preview.height * key.ratio
-                          preview.setPreviewStatic(1.0f)
+                          fullScreenPreview.isLeftEdge = key.isLeftEdge
+                          fullScreenPreview.centerY = fullScreenPreview.height * key.ratio
+                          fullScreenPreview.setPreviewStatic(1.0f)
                       })
 
                       keysContainer.addView(row)
@@ -979,9 +1006,9 @@ jobs:
               }
 
               private fun showAddKeyDialog() {
-                  val inputName = EditText(this).apply { hint = "Key Name (e.g. Action Button)" }
+                  val inputName = EditText(this).apply { hint = "Key Name (e.g. Mute Switch)" }
                   val inputCode = EditText(this).apply {
-                      hint = "Android KeyCode (e.g. 26=Power, 27=Camera)"
+                      hint = "Android KeyCode (e.g. 26=Power)"
                       inputType = android.text.InputType.TYPE_CLASS_NUMBER
                   }
                   val dialogLayout = LinearLayout(this).apply {
@@ -1022,22 +1049,20 @@ jobs:
 
               private fun showColorPicker(dialogTitle: String, onPick: (Int) -> Unit) {
                   val options = arrayOf(
-                      "Pitch Pure Black (OLED)",
-                      "Subtle Specular White (Default Rim)",
-                      "Electric Cyan",
-                      "Neon Purple",
-                      "Bright Amber",
-                      "Deep Crimson",
-                      "Glass Translucent Gray"
+                      "Specular Diamond White",
+                      "Pure OLED Jet Black",
+                      "Deep Sapphire Blue",
+                      "Reflective Silver Gray",
+                      "Electric Amber",
+                      "Neon Violet"
                   )
                   val colorValues = intArrayOf(
+                      0xCCFFFFFF.toInt(),
                       0xFF000000.toInt(),
-                      0x88FFFFFF.toInt(),
-                      0xFF00E5FF.toInt(),
-                      0xFFD500F9.toInt(),
-                      0xFFFFAB00.toInt(),
-                      0xFFFF1744.toInt(),
-                      0x44AAAAAA.toInt()
+                      0xAA0091EA.toInt(),
+                      0x88AAAAAA.toInt(),
+                      0xCCFFAB00.toInt(),
+                      0xCCAA00FF.toInt()
                   )
                   AlertDialog.Builder(this)
                       .setTitle(dialogTitle)
@@ -1047,7 +1072,7 @@ jobs:
                       .show()
               }
 
-              private fun buildSlider(name: String, current: Int, min: Int, max: Int, onVal: (Int) -> Unit): LinearLayout {
+              private fun buildLiveSlider(name: String, current: Int, min: Int, max: Int, onVal: (Int) -> Unit): LinearLayout {
                   val box = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setPadding(0, 6, 0, 6)
@@ -1066,8 +1091,12 @@ jobs:
                               txt.text = "$name: $real"
                               onVal(real)
                           }
-                          override fun onStartTrackingTouch(b: SeekBar?) {}
-                          override fun onStopTrackingTouch(b: SeekBar?) { preview.setPreviewStatic(0f) }
+                          override fun onStartTrackingTouch(b: SeekBar?) {
+                              fullScreenPreview.setPreviewStatic(1.0f)
+                          }
+                          override fun onStopTrackingTouch(b: SeekBar?) {
+                              fullScreenPreview.setPreviewStatic(0f)
+                          }
                       })
                   }
                   box.addView(txt)
@@ -1075,22 +1104,22 @@ jobs:
                   return box
               }
 
-              private fun updatePreview() {
-                  preview.isLeftEdge = store.isLeftEdge
-                  preview.y0 = store.flatTopHalfLengthY0
-                  preview.w = store.blendTransitionW
-                  preview.A = store.peakAmplitudeA
-                  preview.omegaN = store.speedOverall
-                  preview.inwardVelocity = store.inwardImpulse
-                  preview.zeta = store.outwardDamping
-                  preview.bodyColor = store.bodyColor
-                  preview.rimColor = store.rimColor
-                  preview.enableAdaptiveRim = store.enableAdaptiveRim
-                  preview.post {
+              private fun syncAndPreview() {
+                  fullScreenPreview.isLeftEdge = store.isLeftEdge
+                  fullScreenPreview.y0 = store.flatTopHalfLengthY0
+                  fullScreenPreview.w = store.blendTransitionW
+                  fullScreenPreview.A = store.peakAmplitudeA
+                  fullScreenPreview.omegaN = store.speedOverall
+                  fullScreenPreview.inwardVelocity = store.inwardImpulse
+                  fullScreenPreview.zeta = store.outwardDamping
+                  fullScreenPreview.bodyColor = store.bodyColor
+                  fullScreenPreview.enableGlassRefraction = store.enableGlassRefraction
+                  fullScreenPreview.refractionGlowColor = store.refractionGlowColor
+                  fullScreenPreview.post {
                       val first = keyList.firstOrNull()
                       val ratio = first?.ratio ?: 0.22f
-                      preview.centerY = preview.height * ratio
-                      preview.setPreviewStatic(1.0f)
+                      fullScreenPreview.centerY = fullScreenPreview.height * ratio
+                      fullScreenPreview.setPreviewStatic(1.0f)
                   }
               }
           }
