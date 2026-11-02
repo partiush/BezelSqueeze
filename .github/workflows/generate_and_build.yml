@@ -15,13 +15,21 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Scaffold Complete Android Project
+      - name: Scaffold Project Files
         run: |
+          mkdir -p gradle/wrapper
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/java/com/edge/bezelmorph
 
-          # 1. settings.gradle.kts
+          # 1. gradle.properties (Fixes checkDebugAarMetadata AndroidX failure)
+          cat << 'EOF' > gradle.properties
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          EOF
+
+          # 2. settings.gradle.kts
           cat << 'EOF' > settings.gradle.kts
           pluginManagement {
               repositories {
@@ -41,7 +49,7 @@ jobs:
           include(":app")
           EOF
 
-          # 2. Root build.gradle.kts
+          # 3. Root build.gradle.kts
           cat << 'EOF' > build.gradle.kts
           plugins {
               id("com.android.application") version "8.2.2" apply false
@@ -49,7 +57,7 @@ jobs:
           }
           EOF
 
-          # 3. app/build.gradle.kts
+          # 4. app/build.gradle.kts
           cat << 'EOF' > app/build.gradle.kts
           plugins {
               id("com.android.application")
@@ -85,7 +93,7 @@ jobs:
           }
           EOF
 
-          # 4. Manifest
+          # 5. Manifest
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -121,7 +129,7 @@ jobs:
           </manifest>
           EOF
 
-          # 5. Resources
+          # 6. Service Configuration & Resources
           cat << 'EOF' > app/src/main/res/xml/button_event_service_config.xml
           <?xml version="1.0" encoding="utf-8"?>
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
@@ -150,7 +158,7 @@ jobs:
           </resources>
           EOF
 
-          # 6. Source Code: Config Store
+          # 7. Persistent Configuration Store
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -182,7 +190,7 @@ jobs:
           }
           EOF
 
-          # 7. Source Code: High-Performance Surface
+          # 8. High-Fidelity Spline & Specular Rim Engine
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -304,7 +312,7 @@ jobs:
           }
           EOF
 
-          # 8. Source Code: Interceptor Service
+          # 9. Hardware-Linked Interceptor
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -384,7 +392,7 @@ jobs:
           }
           EOF
 
-          # 9. Source Code: Calibration Activity
+          # 10. Live Calibration Activity
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -522,11 +530,15 @@ jobs:
           }
           EOF
 
-      - name: Build Debug APK
-        run: |
-          gradle assembleDebug --stacktrace --no-daemon
+      - name: Build With Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.5
 
-      - name: Upload APK
+      - name: Compile Debug APK
+        run: gradle assembleDebug --stacktrace --no-daemon
+
+      - name: Upload Finished Artifact
         uses: actions/upload-artifact@v4
         with:
           name: EdgeMorph-APK
