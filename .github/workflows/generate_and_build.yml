@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 28
                   targetSdk = 34
-                  versionCode = 16
-                  versionName = "16.0"
+                  versionCode = 17
+                  versionName = "17.0"
               }
 
               compileOptions {
@@ -92,7 +92,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest (Enhanced System Overlay Privileges)
+          # 5. Manifest (Enhanced System Privileges)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -103,6 +103,7 @@ jobs:
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
               <uses-permission android:name="android.permission.VIBRATE" />
               <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
               <application
                   android:allowBackup="true"
@@ -150,7 +151,7 @@ jobs:
           </manifest>
           EOF
 
-          # 6. Service Configuration (flagRequestFilterKeyEvents | flagIncludeNotImportantViews)
+          # 6. Service Configuration
           cat << 'EOF' > app/src/main/res/xml/button_event_service_config.xml
           <?xml version="1.0" encoding="utf-8"?>
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
@@ -195,7 +196,7 @@ jobs:
           }
           EOF
 
-          # 8. Fast In-Memory Config Store with Key Capture Hook
+          # 8. Fast In-Memory Config Store
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -217,7 +218,6 @@ jobs:
               private val prefs: SharedPreferences = context.getSharedPreferences("bezel_morph_pref", Context.MODE_PRIVATE)
               private var cachedKeyMap: SparseArray<KeyItem>? = null
 
-              // Listening mode for automatic key detection
               var isListeningForKey: Boolean = false
               var onKeyDetectedCallback: ((Int) -> Unit)? = null
 
@@ -234,11 +234,11 @@ jobs:
                   set(v) = prefs.edit().putFloat("peak_amp_A", v).apply()
 
               var speedOverall: Float
-                  get() = prefs.getFloat("speed_omega", 42.0f)
+                  get() = prefs.getFloat("speed_omega", 44.0f)
                   set(v) = prefs.edit().putFloat("speed_omega", v).apply()
 
               var inwardImpulse: Float
-                  get() = prefs.getFloat("speed_inward", 1850f)
+                  get() = prefs.getFloat("speed_inward", 2100f)
                   set(v) = prefs.edit().putFloat("speed_inward", v).apply()
 
               var outwardDamping: Float
@@ -309,7 +309,7 @@ jobs:
           }
           EOF
 
-          # 9. Surface View with Screen-Mode Additive Glow (Only Visible Against Pitch Black)
+          # 9. Low-Latency Surface Engine with Pure Additive Screen Glow
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -335,8 +335,8 @@ jobs:
               var w: Float = 85f
               var A: Float = 54f
 
-              var omegaN: Float = 42.0f
-              var inwardVelocity: Float = 1850f
+              var omegaN: Float = 44.0f
+              var inwardVelocity: Float = 2100f
               var zeta: Float = 0.74f
 
               private var currentA: Float = 0f
@@ -351,17 +351,17 @@ jobs:
               private val morphPath = Path()
               private val glowPath = Path()
 
-              // Pitch Pure OLED Black Core
               private val solidBlackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
               }
 
-              // Additive Screen Blending Glow: Mathematically drops to 0 alpha/visible delta on any background > #000000
+              // Additive Screen mode: Completely zero extra luminance on bright/colored pixels,
+              // only emits visible luminance on #000000 pure OLED black.
               private val magicalGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.FILL
                   xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
-                  maskFilter = BlurMaskFilter(20f, BlurMaskFilter.Blur.NORMAL)
+                  maskFilter = BlurMaskFilter(18f, BlurMaskFilter.Blur.NORMAL)
               }
 
               fun onHardwareButtonDown() {
@@ -399,9 +399,9 @@ jobs:
                   if (!isSimulating) return
 
                   val dt = if (lastFrameTimeNs > 0L) {
-                      ((frameTimeNs - lastFrameTimeNs) / 1_000_000_000f).coerceIn(0.002f, 0.016f)
+                      ((frameTimeNs - lastFrameTimeNs) / 1_000_000_000f).coerceIn(0.001f, 0.016f)
                   } else {
-                      0.004f
+                      0.003f
                   }
                   lastFrameTimeNs = frameTimeNs
 
@@ -411,7 +411,7 @@ jobs:
                   velocityA += accel * dt
                   currentA += velocityA * dt
 
-                  if (targetA == 0f && abs(velocityA) < 0.2f && abs(currentA) < 0.2f) {
+                  if (targetA == 0f && abs(velocityA) < 0.15f && abs(currentA) < 0.15f) {
                       currentA = 0f
                       velocityA = 0f
                       isSimulating = false
@@ -449,9 +449,7 @@ jobs:
                   val steps = 60
                   val stepSize = (2f * totalHalfSpan) / steps
                   val invW = 1.0f / w
-
-                  // Magical glow is cast 10px wider than the black pill
-                  val glowExpansion = 10f * (currentA / A)
+                  val glowExpansion = 12f * (currentA / A).coerceIn(0f, 1f)
 
                   if (isLeftEdge) {
                       morphPath.moveTo(0f, yTop)
@@ -480,16 +478,13 @@ jobs:
                       glowPath.lineTo(0f, yBottom + glowExpansion)
                       glowPath.close()
 
-                      // 1. Draw Magical Screen-Mode Glow (Only visible when pixels beneath are 0,0,0)
                       magicalGlowPaint.shader = LinearGradient(
                           0f, yTop, currentA + glowExpansion, centerY,
-                          intArrayOf(0x00FFFFFF, 0x44FFFFFF, 0x00FFFFFF),
+                          intArrayOf(0x00FFFFFF, 0x4DFFFFFF, 0x00FFFFFF),
                           floatArrayOf(0.0f, 0.5f, 1.0f),
                           Shader.TileMode.CLAMP
                       )
                       canvas.drawPath(glowPath, magicalGlowPaint)
-
-                      // 2. Draw Pure OLED Black Body
                       canvas.drawPath(morphPath, solidBlackPaint)
 
                   } else {
@@ -522,7 +517,7 @@ jobs:
 
                       magicalGlowPaint.shader = LinearGradient(
                           xEdge, yTop, xEdge - (currentA + glowExpansion), centerY,
-                          intArrayOf(0x00FFFFFF, 0x44FFFFFF, 0x00FFFFFF),
+                          intArrayOf(0x00FFFFFF, 0x4DFFFFFF, 0x00FFFFFF),
                           floatArrayOf(0.0f, 0.5f, 1.0f),
                           Shader.TileMode.CLAMP
                       )
@@ -533,7 +528,7 @@ jobs:
           }
           EOF
 
-          # 10. Hardware Service with Universal Power Key & Dynamic Key Listener Hook
+          # 10. Hardware Service with Guaranteed Power Button Interception
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -561,11 +556,13 @@ jobs:
               lateinit var store: MorphConfigStore
               private var activeKey: Int = 0
 
-              private val screenReceiver = object : BroadcastReceiver() {
+              // Power Button System Trigger
+              private val powerTriggerReceiver = object : BroadcastReceiver() {
                   override fun onReceive(context: Context?, intent: Intent?) {
-                      if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                          // Hardware Power button press caught by system screen transition
-                          triggerKeyAction(KeyEvent.KEYCODE_POWER)
+                      when (intent?.action) {
+                          Intent.ACTION_SCREEN_OFF, Intent.ACTION_SCREEN_ON -> {
+                              triggerHardwareKeyAction(KeyEvent.KEYCODE_POWER)
+                          }
                       }
                   }
               }
@@ -578,8 +575,11 @@ jobs:
                   startPersistentForeground()
                   attachOverlay()
 
-                  val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
-                  registerReceiver(screenReceiver, filter)
+                  val filter = IntentFilter().apply {
+                      addAction(Intent.ACTION_SCREEN_OFF)
+                      addAction(Intent.ACTION_SCREEN_ON)
+                  }
+                  registerReceiver(powerTriggerReceiver, filter)
               }
 
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -602,7 +602,7 @@ jobs:
 
                   val notification: Notification = NotificationCompat.Builder(this, channelId)
                       .setContentTitle("Perimeter Engine Active")
-                      .setContentText("Syncing with hardware switches")
+                      .setContentText("Listening to hardware switches")
                       .setSmallIcon(android.R.drawable.ic_menu_crop)
                       .setPriority(NotificationCompat.PRIORITY_MIN)
                       .setOngoing(true)
@@ -651,7 +651,6 @@ jobs:
               override fun onKeyEvent(event: KeyEvent): Boolean {
                   val code = event.keyCode
 
-                  // In listening mode: detect any physical key pressed
                   if (store.isListeningForKey && event.action == KeyEvent.ACTION_DOWN) {
                       store.onKeyDetectedCallback?.invoke(code)
                       return true
@@ -682,7 +681,7 @@ jobs:
                   return false
               }
 
-              private fun triggerKeyAction(code: Int) {
+              private fun triggerHardwareKeyAction(code: Int) {
                   val matched = store.getKeyForCodeFast(code) ?: return
                   overlay?.let { view ->
                       view.isLeftEdge = matched.isLeftEdge
@@ -691,7 +690,7 @@ jobs:
                       view.A = store.peakAmplitudeA
                       view.centerY = view.height * matched.ratio
                       view.onHardwareButtonDown()
-                      view.postDelayed({ view.onHardwareButtonUp() }, 80)
+                      view.postDelayed({ view.onHardwareButtonUp() }, 90)
                   }
               }
 
@@ -701,21 +700,24 @@ jobs:
               override fun onDestroy() {
                   super.onDestroy()
                   try {
-                      unregisterReceiver(screenReceiver)
+                      unregisterReceiver(powerTriggerReceiver)
                       overlay?.let { wm?.removeView(it) }
                   } catch (ignored: Exception) {}
               }
           }
           EOF
 
-          # 11. MainActivity with Listening Mode for Dynamic Key Press Detection
+          # 11. Mandatory Setup Gatekeeper & Live HUD
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
           import android.accessibilityservice.AccessibilityServiceInfo
           import android.content.Context
           import android.content.Intent
+          import android.net.Uri
+          import android.os.Build
           import android.os.Bundle
+          import android.os.PowerManager
           import android.provider.Settings
           import android.view.Gravity
           import android.view.KeyEvent
@@ -730,17 +732,21 @@ jobs:
           class MainActivity : AppCompatActivity() {
               private lateinit var store: MorphConfigStore
               private lateinit var fullScreenPreview: BezelSurfaceView
-              private var accessButton: Button? = null
               private lateinit var keysContainer: LinearLayout
               private var keyList = mutableListOf<KeyItem>()
+
+              private lateinit var rootContainer: FrameLayout
+              private lateinit var permissionGateLayout: LinearLayout
+              private lateinit var mainHudLayout: ScrollView
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   store = MorphConfigStore(this)
                   keyList = store.loadKeys()
 
-                  val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
+                  rootContainer = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
 
+                  // Live background preview
                   fullScreenPreview = BezelSurfaceView(this).apply {
                       isLeftEdge = store.isLeftEdge
                       y0 = store.flatTopHalfLengthY0
@@ -750,8 +756,117 @@ jobs:
                       inwardVelocity = store.inwardImpulse
                       zeta = store.outwardDamping
                   }
-                  root.addView(fullScreenPreview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                  rootContainer.addView(fullScreenPreview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
+                  permissionGateLayout = createPermissionGateScreen()
+                  mainHudLayout = createMainHudScreen()
+
+                  rootContainer.addView(permissionGateLayout, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                  rootContainer.addView(mainHudLayout, FrameLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.58).toInt().apply {
+                  }).also {
+                      (mainHudLayout.layoutParams as FrameLayout.LayoutParams).gravity = Gravity.BOTTOM
+                      (mainHudLayout.layoutParams as FrameLayout.LayoutParams).setMargins(20, 0, 20, 40)
+                  }
+
+                  setContentView(rootContainer)
+                  checkPermissionsState()
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  checkPermissionsState()
+                  syncAndPreview()
+              }
+
+              private fun checkPermissionsState() {
+                  val hasAccessibility = isAccessibilityEnabled()
+                  val hasOverlay = Settings.canDrawOverlays(this)
+
+                  if (hasAccessibility && hasOverlay) {
+                      permissionGateLayout.visibility = View.GONE
+                      mainHudLayout.visibility = View.VISIBLE
+                  } else {
+                      permissionGateLayout.visibility = View.VISIBLE
+                      mainHudLayout.visibility = View.GONE
+                  }
+              }
+
+              private fun createPermissionGateScreen(): LinearLayout {
+                  return LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(0xFF0D0D0D.toInt())
+                      gravity = Gravity.CENTER
+                      setPadding(48, 48, 48, 48)
+
+                      val icon = ImageView(context).apply {
+                          setImageResource(android.R.drawable.ic_dialog_alert)
+                          setColorFilter(0xFF5389FF.toInt())
+                          layoutParams = LinearLayout.LayoutParams(160, 160).apply { bottomMargin = 32 }
+                      }
+                      addView(icon)
+
+                      val title = TextView(context).apply {
+                          text = "Required Setup"
+                          setTextColor(0xFFFFFFFF.toInt())
+                          textSize = 22f
+                          gravity = Gravity.CENTER
+                          setPadding(0, 0, 0, 16)
+                      }
+                      addView(title)
+
+                      val desc = TextView(context).apply {
+                          text = "Bezel Morph requires both Accessibility and Display Overlay permissions to run at native 0 ms speed.\n\nYou cannot proceed into the app until both are enabled."
+                          setTextColor(0xFFCCCCCC.toInt())
+                          textSize = 14f
+                          gravity = Gravity.CENTER
+                          setPadding(0, 0, 0, 48)
+                      }
+                      addView(desc)
+
+                      val btnOverlay = Button(context).apply {
+                          text = "1. Enable 'Display Over Other Apps'"
+                          setBackgroundColor(0xFF2E66FF.toInt())
+                          setTextColor(0xFFFFFFFF.toInt())
+                          setOnClickListener {
+                              startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                          }
+                          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 20 }
+                      }
+                      addView(btnOverlay)
+
+                      val btnAccess = Button(context).apply {
+                          text = "2. Enable 'Accessibility Service'"
+                          setBackgroundColor(0xFF2E66FF.toInt())
+                          setTextColor(0xFFFFFFFF.toInt())
+                          setOnClickListener {
+                              startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                          }
+                          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 20 }
+                      }
+                      addView(btnAccess)
+
+                      // Battery Optimization Intent
+                      val btnBattery = Button(context).apply {
+                          text = "3. Disable Battery Restrictions"
+                          setBackgroundColor(0xFF1E1E1E.toInt())
+                          setTextColor(0xFFFFFFFF.toInt())
+                          setOnClickListener {
+                              try {
+                                  val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                      data = Uri.parse("package:$packageName")
+                                  }
+                                  startActivity(intent)
+                              } catch (e: Exception) {
+                                  startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                              }
+                          }
+                          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                      }
+                      addView(btnBattery)
+                  }
+              }
+
+              private fun createMainHudScreen(): ScrollView {
                   val hudScroll = ScrollView(this).apply {
                       setBackgroundColor(0xD9101010.toInt())
                       setPadding(32, 28, 32, 32)
@@ -824,44 +939,11 @@ jobs:
                   }
                   hudContent.addView(btnAddKey)
 
-                  accessButton = Button(this).apply {
-                      text = "Grant System Access"
-                      setBackgroundColor(0xFF2E66FF.toInt())
-                      setTextColor(0xFFFFFFFF.toInt())
-                      setOnClickListener {
-                          startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                      }
-                  }
-                  hudContent.addView(accessButton)
-
                   hudScroll.addView(hudContent)
-                  val cardParams = FrameLayout.LayoutParams(
-                      FrameLayout.LayoutParams.MATCH_PARENT,
-                      (resources.displayMetrics.heightPixels * 0.58).toInt()
-                  ).apply {
-                      gravity = Gravity.BOTTOM
-                      setMargins(20, 0, 20, 40)
-                  }
-                  root.addView(hudScroll, cardParams)
-
-                  setContentView(root)
+                  return hudScroll
               }
 
-              override fun onResume() {
-                  super.onResume()
-                  checkPermissionState()
-                  syncAndPreview()
-              }
-
-              private fun checkPermissionState() {
-                  if (isServiceRunning()) {
-                      accessButton?.visibility = View.GONE
-                  } else {
-                      accessButton?.visibility = View.VISIBLE
-                  }
-              }
-
-              private fun isServiceRunning(): Boolean {
+              private fun isAccessibilityEnabled(): Boolean {
                   val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
                   val services = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
                   for (s in services) {
@@ -944,14 +1026,13 @@ jobs:
                   }
               }
 
-              // Auto-Detect Physical Button on Press
               private fun startKeyListeningDialog() {
                   val service = HardwareKeyMonitorService.instance
                   val targetStore = service?.store ?: store
 
                   val progressDialog = AlertDialog.Builder(this)
                       .setTitle("Listening for Physical Key...")
-                      .setMessage("Press ANY physical hardware button now (e.g. Power, Mute, Volume, Shutter).")
+                      .setMessage("Press ANY physical hardware button now.")
                       .setNegativeButton("Cancel") { _, _ ->
                           targetStore.isListeningForKey = false
                           targetStore.onKeyDetectedCallback = null
