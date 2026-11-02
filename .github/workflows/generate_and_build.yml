@@ -15,7 +15,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Scaffold Complete Project
+      - name: Scaffold Project Files
         run: |
           mkdir -p gradle/wrapper
           mkdir -p app/src/main/res/values
@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 28
                   targetSdk = 34
-                  versionCode = 15
-                  versionName = "15.0"
+                  versionCode = 16
+                  versionName = "16.0"
               }
 
               compileOptions {
@@ -92,7 +92,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest
+          # 5. Manifest (Enhanced System Overlay Privileges)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -150,13 +150,13 @@ jobs:
           </manifest>
           EOF
 
-          # 6. Service Configuration & Resources
+          # 6. Service Configuration (flagRequestFilterKeyEvents | flagIncludeNotImportantViews)
           cat << 'EOF' > app/src/main/res/xml/button_event_service_config.xml
           <?xml version="1.0" encoding="utf-8"?>
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
               android:accessibilityEventTypes="typeAllMask"
               android:accessibilityFeedbackType="feedbackGeneric"
-              android:accessibilityFlags="flagRequestFilterKeyEvents|flagIncludeNotImportantViews"
+              android:accessibilityFlags="flagRequestFilterKeyEvents|flagIncludeNotImportantViews|flagReportViewIds"
               android:canRequestFilterKeyEvents="true"
               android:canRetrieveWindowContent="false"
               android:description="@string/service_description" />
@@ -195,7 +195,7 @@ jobs:
           }
           EOF
 
-          # 8. Fast In-Memory Config Store
+          # 8. Fast In-Memory Config Store with Key Capture Hook
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -217,6 +217,10 @@ jobs:
               private val prefs: SharedPreferences = context.getSharedPreferences("bezel_morph_pref", Context.MODE_PRIVATE)
               private var cachedKeyMap: SparseArray<KeyItem>? = null
 
+              // Listening mode for automatic key detection
+              var isListeningForKey: Boolean = false
+              var onKeyDetectedCallback: ((Int) -> Unit)? = null
+
               var flatTopHalfLengthY0: Float
                   get() = prefs.getFloat("y0_val", 50f)
                   set(v) = prefs.edit().putFloat("y0_val", v).apply()
@@ -230,11 +234,11 @@ jobs:
                   set(v) = prefs.edit().putFloat("peak_amp_A", v).apply()
 
               var speedOverall: Float
-                  get() = prefs.getFloat("speed_omega", 38.0f)
+                  get() = prefs.getFloat("speed_omega", 42.0f)
                   set(v) = prefs.edit().putFloat("speed_omega", v).apply()
 
               var inwardImpulse: Float
-                  get() = prefs.getFloat("speed_inward", 1600f)
+                  get() = prefs.getFloat("speed_inward", 1850f)
                   set(v) = prefs.edit().putFloat("speed_inward", v).apply()
 
               var outwardDamping: Float
@@ -247,9 +251,7 @@ jobs:
 
               @Synchronized
               fun getKeyForCodeFast(keyCode: Int): KeyItem? {
-                  if (cachedKeyMap == null) {
-                      loadKeys()
-                  }
+                  if (cachedKeyMap == null) loadKeys()
                   return cachedKeyMap?.get(keyCode)
               }
 
@@ -260,7 +262,7 @@ jobs:
                   if (raw.isNullOrEmpty()) {
                       list.add(KeyItem("vol_up", "Volume Up", 24, 0.22f, false))
                       list.add(KeyItem("vol_down", "Volume Down", 25, 0.32f, false))
-                      list.add(KeyItem("power_btn", "Power Button", 26, 0.18f, true))
+                      list.add(KeyItem("power_btn", "Power Button", 26, 0.18f, false))
                       saveKeys(list)
                       return list
                   }
@@ -307,7 +309,7 @@ jobs:
           }
           EOF
 
-          # 9. True 0ms Native Direct-Drive Engine with Auto Dark Refraction
+          # 9. Surface View with Screen-Mode Additive Glow (Only Visible Against Pitch Black)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -333,12 +335,9 @@ jobs:
               var w: Float = 85f
               var A: Float = 54f
 
-              var omegaN: Float = 38.0f
-              var inwardVelocity: Float = 1600f
+              var omegaN: Float = 42.0f
+              var inwardVelocity: Float = 1850f
               var zeta: Float = 0.74f
-
-              // Automatic luminance detection state
-              var isBackgroundPitchBlack: Boolean = true
 
               private var currentA: Float = 0f
               private var velocityA: Float = 0f
@@ -350,36 +349,29 @@ jobs:
               private val choreographer = Choreographer.getInstance()
 
               private val morphPath = Path()
-              private val specularPath = Path()
+              private val glowPath = Path()
 
-              private val solidOledPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              // Pitch Pure OLED Black Core
+              private val solidBlackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
               }
 
-              private val ambientOcclusionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  color = 0x66000000
+              // Additive Screen Blending Glow: Mathematically drops to 0 alpha/visible delta on any background > #000000
+              private val magicalGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.FILL
-                  maskFilter = BlurMaskFilter(16f, BlurMaskFilter.Blur.NORMAL)
-              }
-
-              // Modern dynamic glass specular refraction (Illuminates automatically on dark OLED backgrounds)
-              private val modernRefractionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  style = Paint.Style.STROKE
-                  strokeWidth = 3.6f
-                  strokeCap = Paint.Cap.ROUND
+                  xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+                  maskFilter = BlurMaskFilter(20f, BlurMaskFilter.Blur.NORMAL)
               }
 
               fun onHardwareButtonDown() {
                   targetA = A
-                  // Immediate direct velocity injection on the exact microsecond
                   velocityA += inwardVelocity
                   triggerHaptic()
                   startSimulation()
               }
 
               fun onHardwareButtonUp() {
-                  // Instant zero-latency release: immediately drops target to 0
                   targetA = 0f
                   startSimulation()
               }
@@ -409,18 +401,16 @@ jobs:
                   val dt = if (lastFrameTimeNs > 0L) {
                       ((frameTimeNs - lastFrameTimeNs) / 1_000_000_000f).coerceIn(0.002f, 0.016f)
                   } else {
-                      0.005f
+                      0.004f
                   }
                   lastFrameTimeNs = frameTimeNs
 
-                  // Damped Harmonic Oscillator (Instant Direct-Drive)
                   val displacement = currentA - targetA
                   val accel = -(omegaN * omegaN * displacement) - (2f * zeta * omegaN * velocityA)
 
                   velocityA += accel * dt
                   currentA += velocityA * dt
 
-                  // Precision cutoff threshold
                   if (targetA == 0f && abs(velocityA) < 0.2f && abs(currentA) < 0.2f) {
                       currentA = 0f
                       velocityA = 0f
@@ -439,7 +429,7 @@ jobs:
                           vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
                       } else {
                           @Suppress("DEPRECATION")
-                          vibrator?.vibrate(6)
+                          vibrator?.vibrate(5)
                       }
                   } catch (ignored: Exception) {}
               }
@@ -454,15 +444,19 @@ jobs:
                   val yBottom = centerY + totalHalfSpan
 
                   morphPath.reset()
-                  specularPath.reset()
+                  glowPath.reset()
 
-                  val steps = 64
+                  val steps = 60
                   val stepSize = (2f * totalHalfSpan) / steps
                   val invW = 1.0f / w
 
+                  // Magical glow is cast 10px wider than the black pill
+                  val glowExpansion = 10f * (currentA / A)
+
                   if (isLeftEdge) {
                       morphPath.moveTo(0f, yTop)
-                      specularPath.moveTo(0f, yTop)
+                      glowPath.moveTo(0f, yTop - glowExpansion)
+
                       for (i in 0..steps) {
                           val curY = yTop + (i * stepSize)
                           val dist = abs(curY - centerY)
@@ -478,30 +472,31 @@ jobs:
                               else -> 0f
                           }
                           morphPath.lineTo(x, curY)
-                          specularPath.lineTo(x, curY)
+                          glowPath.lineTo(x + glowExpansion, curY)
                       }
                       morphPath.lineTo(0f, yBottom)
                       morphPath.close()
 
-                      canvas.drawPath(morphPath, ambientOcclusionPaint)
-                      canvas.drawPath(morphPath, solidOledPaint)
+                      glowPath.lineTo(0f, yBottom + glowExpansion)
+                      glowPath.close()
 
-                      // Automatic adaptive refraction on dark backgrounds
-                      if (isBackgroundPitchBlack) {
-                          val ratio = (currentA / A).coerceIn(0f, 1f)
-                          modernRefractionPaint.shader = LinearGradient(
-                              0f, yTop, currentA, centerY,
-                              intArrayOf(0x00FFFFFF, 0xB3FFFFFF.toInt(), 0x00FFFFFF),
-                              floatArrayOf(0.0f, 0.5f, 1.0f),
-                              Shader.TileMode.CLAMP
-                          )
-                          modernRefractionPaint.alpha = (240 * ratio).toInt()
-                          canvas.drawPath(specularPath, modernRefractionPaint)
-                      }
+                      // 1. Draw Magical Screen-Mode Glow (Only visible when pixels beneath are 0,0,0)
+                      magicalGlowPaint.shader = LinearGradient(
+                          0f, yTop, currentA + glowExpansion, centerY,
+                          intArrayOf(0x00FFFFFF, 0x44FFFFFF, 0x00FFFFFF),
+                          floatArrayOf(0.0f, 0.5f, 1.0f),
+                          Shader.TileMode.CLAMP
+                      )
+                      canvas.drawPath(glowPath, magicalGlowPaint)
+
+                      // 2. Draw Pure OLED Black Body
+                      canvas.drawPath(morphPath, solidBlackPaint)
+
                   } else {
                       val xEdge = screenW
                       morphPath.moveTo(xEdge, yTop)
-                      specularPath.moveTo(xEdge, yTop)
+                      glowPath.moveTo(xEdge, yTop - glowExpansion)
+
                       for (i in 0..steps) {
                           val curY = yTop + (i * stepSize)
                           val dist = abs(curY - centerY)
@@ -517,31 +512,28 @@ jobs:
                               else -> 0f
                           }
                           morphPath.lineTo(xEdge - x, curY)
-                          specularPath.lineTo(xEdge - x, curY)
+                          glowPath.lineTo(xEdge - (x + glowExpansion), curY)
                       }
                       morphPath.lineTo(xEdge, yBottom)
                       morphPath.close()
 
-                      canvas.drawPath(morphPath, ambientOcclusionPaint)
-                      canvas.drawPath(morphPath, solidOledPaint)
+                      glowPath.lineTo(xEdge, yBottom + glowExpansion)
+                      glowPath.close()
 
-                      if (isBackgroundPitchBlack) {
-                          val ratio = (currentA / A).coerceIn(0f, 1f)
-                          modernRefractionPaint.shader = LinearGradient(
-                              xEdge, yTop, xEdge - currentA, centerY,
-                              intArrayOf(0x00FFFFFF, 0xB3FFFFFF.toInt(), 0x00FFFFFF),
-                              floatArrayOf(0.0f, 0.5f, 1.0f),
-                              Shader.TileMode.CLAMP
-                          )
-                          modernRefractionPaint.alpha = (240 * ratio).toInt()
-                          canvas.drawPath(specularPath, modernRefractionPaint)
-                      }
+                      magicalGlowPaint.shader = LinearGradient(
+                          xEdge, yTop, xEdge - (currentA + glowExpansion), centerY,
+                          intArrayOf(0x00FFFFFF, 0x44FFFFFF, 0x00FFFFFF),
+                          floatArrayOf(0.0f, 0.5f, 1.0f),
+                          Shader.TileMode.CLAMP
+                      )
+                      canvas.drawPath(glowPath, magicalGlowPaint)
+                      canvas.drawPath(morphPath, solidBlackPaint)
                   }
               }
           }
           EOF
 
-          # 10. Hardware Service with Direct Dispatch
+          # 10. Hardware Service with Universal Power Key & Dynamic Key Listener Hook
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -549,6 +541,10 @@ jobs:
           import android.app.Notification
           import android.app.NotificationChannel
           import android.app.NotificationManager
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+          import android.content.IntentFilter
           import android.graphics.PixelFormat
           import android.os.Build
           import android.view.*
@@ -556,20 +552,37 @@ jobs:
           import androidx.core.app.NotificationCompat
 
           class HardwareKeyMonitorService : AccessibilityService() {
+              companion object {
+                  var instance: HardwareKeyMonitorService? = null
+              }
+
               private var wm: WindowManager? = null
               private var overlay: BezelSurfaceView? = null
-              private lateinit var store: MorphConfigStore
+              lateinit var store: MorphConfigStore
               private var activeKey: Int = 0
+
+              private val screenReceiver = object : BroadcastReceiver() {
+                  override fun onReceive(context: Context?, intent: Intent?) {
+                      if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                          // Hardware Power button press caught by system screen transition
+                          triggerKeyAction(KeyEvent.KEYCODE_POWER)
+                      }
+                  }
+              }
 
               override fun onServiceConnected() {
                   super.onServiceConnected()
+                  instance = this
                   store = MorphConfigStore(this)
                   store.loadKeys()
                   startPersistentForeground()
                   attachOverlay()
+
+                  val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+                  registerReceiver(screenReceiver, filter)
               }
 
-              override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                   return START_STICKY
               }
 
@@ -628,7 +641,6 @@ jobs:
                           omegaN = store.speedOverall
                           inwardVelocity = store.inwardImpulse
                           zeta = store.outwardDamping
-                          isBackgroundPitchBlack = true
                       }
                       wm?.addView(overlay, params)
                   } catch (e: Exception) {
@@ -638,8 +650,14 @@ jobs:
 
               override fun onKeyEvent(event: KeyEvent): Boolean {
                   val code = event.keyCode
-                  val matched = store.getKeyForCodeFast(code)
 
+                  // In listening mode: detect any physical key pressed
+                  if (store.isListeningForKey && event.action == KeyEvent.ACTION_DOWN) {
+                      store.onKeyDetectedCallback?.invoke(code)
+                      return true
+                  }
+
+                  val matched = store.getKeyForCodeFast(code)
                   if (matched != null) {
                       if (event.action == KeyEvent.ACTION_DOWN) {
                           activeKey = code
@@ -664,17 +682,33 @@ jobs:
                   return false
               }
 
+              private fun triggerKeyAction(code: Int) {
+                  val matched = store.getKeyForCodeFast(code) ?: return
+                  overlay?.let { view ->
+                      view.isLeftEdge = matched.isLeftEdge
+                      view.y0 = store.flatTopHalfLengthY0
+                      view.w = store.blendTransitionW
+                      view.A = store.peakAmplitudeA
+                      view.centerY = view.height * matched.ratio
+                      view.onHardwareButtonDown()
+                      view.postDelayed({ view.onHardwareButtonUp() }, 80)
+                  }
+              }
+
               override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
               override fun onInterrupt() {}
 
               override fun onDestroy() {
                   super.onDestroy()
-                  try { overlay?.let { wm?.removeView(it) } } catch (ignored: Exception) {}
+                  try {
+                      unregisterReceiver(screenReceiver)
+                      overlay?.let { wm?.removeView(it) }
+                  } catch (ignored: Exception) {}
               }
           }
           EOF
 
-          # 11. Full-Screen Calibration HUD with Smooth Drag Lock
+          # 11. MainActivity with Listening Mode for Dynamic Key Press Detection
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -684,6 +718,7 @@ jobs:
           import android.os.Bundle
           import android.provider.Settings
           import android.view.Gravity
+          import android.view.KeyEvent
           import android.view.MotionEvent
           import android.view.View
           import android.view.accessibility.AccessibilityManager
@@ -704,11 +739,8 @@ jobs:
                   store = MorphConfigStore(this)
                   keyList = store.loadKeys()
 
-                  val root = FrameLayout(this).apply {
-                      setBackgroundColor(0xFF000000.toInt())
-                  }
+                  val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
 
-                  // Live bezel surface covers entire display
                   fullScreenPreview = BezelSurfaceView(this).apply {
                       isLeftEdge = store.isLeftEdge
                       y0 = store.flatTopHalfLengthY0
@@ -717,11 +749,9 @@ jobs:
                       omegaN = store.speedOverall
                       inwardVelocity = store.inwardImpulse
                       zeta = store.outwardDamping
-                      isBackgroundPitchBlack = true
                   }
                   root.addView(fullScreenPreview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
-                  // Non-blocking translucent calibration HUD
                   val hudScroll = ScrollView(this).apply {
                       setBackgroundColor(0xD9101010.toInt())
                       setPadding(32, 28, 32, 32)
@@ -751,7 +781,6 @@ jobs:
                       syncAndPreview()
                   })
 
-                  // Speed & Kinetics
                   val physicsHeader = TextView(this).apply {
                       text = "Speed & Kinetics"
                       setTextColor(0xFF5389FF.toInt())
@@ -775,7 +804,6 @@ jobs:
                       fullScreenPreview.zeta = store.outwardDamping
                   })
 
-                  // Hardware Key List
                   val keysHeader = TextView(this).apply {
                       text = "Hardware Key Placement"
                       setTextColor(0xFF5389FF.toInt())
@@ -789,10 +817,10 @@ jobs:
                   renderKeyList()
 
                   val btnAddKey = Button(this).apply {
-                      text = "+ Add New Physical Key"
+                      text = "+ Detect & Add Any Physical Key"
                       setBackgroundColor(0xFF1B5E20.toInt())
                       setTextColor(0xFFFFFFFF.toInt())
-                      setOnClickListener { showAddKeyDialog() }
+                      setOnClickListener { startKeyListeningDialog() }
                   }
                   hudContent.addView(btnAddKey)
 
@@ -904,7 +932,6 @@ jobs:
                       }
                       row.addView(sideToggle)
 
-                      // Prevents ScrollView from intercepting drag gestures on key positioning sliders
                       row.addView(buildTouchLockedSlider("Position (${key.name})", (key.ratio * 1000).toInt(), 50, 950) { p ->
                           key.ratio = p / 1000f
                           store.saveKeys(keyList)
@@ -917,26 +944,50 @@ jobs:
                   }
               }
 
-              private fun showAddKeyDialog() {
-                  val inputName = EditText(this).apply { hint = "Key Name (e.g. Action Button)" }
-                  val inputCode = EditText(this).apply {
-                      hint = "Android KeyCode (e.g. 26=Power)"
-                      inputType = android.text.InputType.TYPE_CLASS_NUMBER
-                  }
-                  val dialogLayout = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setPadding(40, 20, 40, 20)
-                      addView(inputName)
-                      addView(inputCode)
+              // Auto-Detect Physical Button on Press
+              private fun startKeyListeningDialog() {
+                  val service = HardwareKeyMonitorService.instance
+                  val targetStore = service?.store ?: store
+
+                  val progressDialog = AlertDialog.Builder(this)
+                      .setTitle("Listening for Physical Key...")
+                      .setMessage("Press ANY physical hardware button now (e.g. Power, Mute, Volume, Shutter).")
+                      .setNegativeButton("Cancel") { _, _ ->
+                          targetStore.isListeningForKey = false
+                          targetStore.onKeyDetectedCallback = null
+                      }
+                      .setCancelable(false)
+                      .create()
+
+                  targetStore.isListeningForKey = true
+                  targetStore.onKeyDetectedCallback = { detectedCode ->
+                      runOnUiThread {
+                          targetStore.isListeningForKey = false
+                          progressDialog.dismiss()
+                          promptSaveKey(detectedCode)
+                      }
                   }
 
+                  progressDialog.show()
+              }
+
+              private fun promptSaveKey(code: Int) {
+                  val inputName = EditText(this).apply {
+                      setText(when (code) {
+                          KeyEvent.KEYCODE_POWER -> "Power Button"
+                          KeyEvent.KEYCODE_VOLUME_UP -> "Volume Up"
+                          KeyEvent.KEYCODE_VOLUME_DOWN -> "Volume Down"
+                          KeyEvent.KEYCODE_CAMERA -> "Camera Shutter"
+                          else -> "Button (Code $code)"
+                      })
+                  }
                   AlertDialog.Builder(this)
-                      .setTitle("Add Hardware Key")
-                      .setView(dialogLayout)
-                      .setPositiveButton("Add") { _, _ ->
-                          val name = inputName.text.toString().ifEmpty { "Custom Button" }
-                          val code = inputCode.text.toString().toIntOrNull() ?: 26
-                          val newItem = KeyItem(UUID.randomUUID().toString(), name, code, 0.45f, false)
+                      .setTitle("Physical Key Detected!")
+                      .setMessage("Detected KeyCode: $code. Enter a label for this button:")
+                      .setView(inputName)
+                      .setPositiveButton("Save") { _, _ ->
+                          val label = inputName.text.toString().ifEmpty { "Button $code" }
+                          val newItem = KeyItem(UUID.randomUUID().toString(), label, code, 0.45f, false)
                           keyList.add(newItem)
                           store.saveKeys(keyList)
                           renderKeyList()
@@ -959,7 +1010,6 @@ jobs:
                       .show()
               }
 
-              // Locks touch events to the slider so parent ScrollViews do not swallow horizontal movements
               private fun buildTouchLockedSlider(name: String, current: Int, min: Int, max: Int, onVal: (Int) -> Unit): LinearLayout {
                   val box = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
