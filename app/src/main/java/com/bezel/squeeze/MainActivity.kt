@@ -24,6 +24,7 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
@@ -56,16 +57,24 @@ class MainActivity : AppCompatActivity() {
         val btnPerm: MaterialButton = findViewById(R.id.btnPerm)
         val btnHoldTest: MaterialButton = findViewById(R.id.btnHoldTest)
         val btnTestVolumePanel: MaterialButton = findViewById(R.id.btnTestVolumePanel)
+        val switchEnableVolumePanel: MaterialSwitch = findViewById(R.id.switchEnableVolumePanel)
+        val boxPanelOptions: LinearLayout = findViewById(R.id.boxPanelOptions)
         val spinnerPanelStyle: Spinner = findViewById(R.id.spinnerPanelStyle)
+        val btnOpenCodeEditor: MaterialButton = findViewById(R.id.btnOpenCodeEditor)
+
+        val switchContinuousPress: MaterialSwitch = findViewById(R.id.switchContinuousPress)
+        val switchHaptics: MaterialSwitch = findViewById(R.id.switchHaptics)
+        val boxButtonBehaviorContainer: LinearLayout = findViewById(R.id.boxButtonBehaviorContainer)
+        val boxPanelGeometryContainer: LinearLayout = findViewById(R.id.boxPanelGeometryContainer)
+        val boxBulgeContainer: LinearLayout = findViewById(R.id.boxBulgeContainer)
+
         val spinnerShape: Spinner = findViewById(R.id.spinnerShape)
         val btnOpenDraw: MaterialButton = findViewById(R.id.btnOpenDraw)
         val colorPreview: View = findViewById(R.id.colorPreview)
         val btnPickColor: MaterialButton = findViewById(R.id.btnPickColor)
         val switchRightEdge: MaterialSwitch = findViewById(R.id.switchRightEdge)
         val switchUnified: MaterialSwitch = findViewById(R.id.switchUnified)
-        val switchHaptics: MaterialSwitch = findViewById(R.id.switchHaptics)
         val btnAutoCalibrate: MaterialButton = findViewById(R.id.btnAutoCalibrate)
-        val boxSlidersContainer: LinearLayout = findViewById(R.id.boxSlidersContainer)
 
         val tvExtraKeyStatus: TextView = findViewById(R.id.tvExtraKeyStatus)
         val btnMapExtra: MaterialButton = findViewById(R.id.btnMapExtra)
@@ -94,17 +103,77 @@ class MainActivity : AppCompatActivity() {
             sendBroadcast(Intent("com.bezel.squeeze.TEST_PANEL").setPackage(packageName))
         }
 
-        val panels = arrayOf("iOS Dynamic Panel", "Samsung OneUI", "Xiaomi HyperOS", "OPPO ColorOS", "Google Pixel")
+        // Master Volume Panel Toggle
+        val panelEnabled = prefs.getBoolean("volume_panel_enabled", true)
+        switchEnableVolumePanel.isChecked = panelEnabled
+        boxPanelOptions.visibility = if (panelEnabled) View.VISIBLE else View.GONE
+        switchEnableVolumePanel.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("volume_panel_enabled", isChecked).apply()
+            boxPanelOptions.visibility = if (isChecked) View.VISIBLE else View.GONE
+            notifyEngine()
+        }
+
+        // Panel Options with Custom Scripted Engine
+        val panels = arrayOf(
+            "iOS Dynamic Panel",
+            "Samsung OneUI",
+            "Xiaomi HyperOS",
+            "OPPO ColorOS",
+            "Google Pixel",
+            "Custom Scripted Engine (HTML5/Canvas)"
+        )
         spinnerPanelStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, panels)
-        spinnerPanelStyle.setSelection(prefs.getInt("volume_panel_style", 0).coerceIn(0, 4))
+        val currentStyle = prefs.getInt("volume_panel_style", 0).coerceIn(0, 5)
+        spinnerPanelStyle.setSelection(currentStyle)
+        btnOpenCodeEditor.visibility = if (currentStyle == 5) View.VISIBLE else View.GONE
+
         spinnerPanelStyle.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p0: AdapterView<*>?, p1: View?, pos: Int, p3: Long) {
                 prefs.edit().putInt("volume_panel_style", pos).apply()
+                btnOpenCodeEditor.visibility = if (pos == 5) View.VISIBLE else View.GONE
                 notifyEngine()
             }
             override fun onNothingSelected(p0: AdapterView<*>?) {}
         }
 
+        btnOpenCodeEditor.setOnClickListener {
+            showCodeEditorDialog(::notifyEngine)
+        }
+
+        // Continuous Press and Haptics
+        switchContinuousPress.isChecked = prefs.getBoolean("enable_continuous_press", true)
+        switchContinuousPress.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("enable_continuous_press", isChecked).apply()
+            notifyEngine()
+        }
+
+        switchHaptics.isChecked = prefs.getBoolean("enable_haptics", true)
+        switchHaptics.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("enable_haptics", isChecked).apply()
+        }
+
+        // Sliders for Button & Volume Tuning
+        fun populateTuningSliders() {
+            addSafeSlider(boxButtonBehaviorContainer, "Volume Step Size", "vol_step_size", 1f, 1f, "steps", 1f, 10f, ::notifyEngine)
+            addSafeSlider(boxButtonBehaviorContainer, "Hold Repeat Delay", "continuous_speed_ms", 120f, 10f, "ms", 30f, 500f, ::notifyEngine)
+            addSafeSlider(boxButtonBehaviorContainer, "Max Allowed Volume Cap", "vol_max_limit_pct", 100f, 5f, "%", 10f, 100f, ::notifyEngine)
+        }
+        populateTuningSliders()
+
+        // Sliders for Panel Geometry, Scale & Rotation
+        fun populateGeometrySliders() {
+            addSafeSlider(boxPanelGeometryContainer, "Panel Width", "custom_panel_width", 50f, 2f, "px", 10f, 300f, ::notifyEngine)
+            addSafeSlider(boxPanelGeometryContainer, "Panel Height", "custom_panel_height", 240f, 10f, "px", 60f, 800f, ::notifyEngine)
+            addSafeSlider(boxPanelGeometryContainer, "Scale Multiplier", "custom_panel_scale", 100f, 5f, "%", 20f, 300f, ::notifyEngine)
+            addSafeSlider(boxPanelGeometryContainer, "Rotation Angle", "custom_panel_rotation", 0f, 5f, "°", -180f, 180f, ::notifyEngine)
+            addSafeSlider(boxPanelGeometryContainer, "Corner Radius", "custom_panel_corner_radius", 25f, 2f, "px", 0f, 150f, ::notifyEngine)
+            addSafeSlider(boxPanelGeometryContainer, "Horizontal X-Offset", "custom_panel_offset_x", 0f, 5f, "px", -300f, 300f, ::notifyEngine)
+            addSafeSlider(boxPanelGeometryContainer, "Vertical Y-Offset", "custom_panel_offset_y", 0f, 5f, "px", -500f, 500f, ::notifyEngine)
+            addSafeSlider(boxPanelGeometryContainer, "Auto-Dismiss Timeout", "panel_dismiss_timeout_ms", 2200f, 100f, "ms", 500f, 10000f, ::notifyEngine)
+        }
+        populateGeometrySliders()
+
+        // Bezel Bulge Setup
         val shapes = arrayOf("Smooth Squircle", "Organic Teardrop", "Geometric Pill", "Beveled Wedge", "Freehand Drawn Curve")
         spinnerShape.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, shapes)
         val currentShape = prefs.getInt("shape_type", 0).coerceIn(0, 4)
@@ -144,23 +213,16 @@ class MainActivity : AppCompatActivity() {
             notifyEngine()
         }
 
-        switchHaptics.isChecked = prefs.getBoolean("enable_haptics", true)
-        switchHaptics.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("enable_haptics", isChecked).apply()
+        fun populateBulgeSliders() {
+            addSafeSlider(boxBulgeContainer, "Volume Up Height", "vol_up_y", 720f, 10f, "px", 100f, 3000f, ::notifyEngine)
+            addSafeSlider(boxBulgeContainer, "Volume Down Height", "vol_down_y", 960f, 10f, "px", 100f, 3000f, ::notifyEngine)
+            addSafeSlider(boxBulgeContainer, "Rocker Total Length", "rocker_length", 380f, 10f, "px", 50f, 1000f, ::notifyEngine)
+            addSafeSlider(boxBulgeContainer, "Separate Button Length", "single_btn_length", 160f, 10f, "px", 30f, 600f, ::notifyEngine)
+            addSafeSlider(boxBulgeContainer, "Bulge Push Depth", "bulge_depth", 42f, 2f, "px", 5f, 200f, ::notifyEngine)
+            addSafeSlider(boxBulgeContainer, "Inward Speed", "press_speed_ms", 75f, 5f, "ms", 10f, 500f, ::notifyEngine)
+            addSafeSlider(boxBulgeContainer, "Release Bounce Speed", "release_speed_ms", 180f, 10f, "ms", 30f, 1000f, ::notifyEngine)
         }
-
-        fun populateSliders() {
-            boxSlidersContainer.removeAllViews()
-            addSafeSlider(boxSlidersContainer, "Volume Up Height", "vol_up_y", 720f, 10f, "px", ::notifyEngine)
-            addSafeSlider(boxSlidersContainer, "Volume Down Height", "vol_down_y", 960f, 10f, "px", ::notifyEngine)
-            addSafeSlider(boxSlidersContainer, "Rocker Total Length", "rocker_length", 380f, 10f, "px", ::notifyEngine)
-            addSafeSlider(boxSlidersContainer, "Separate Button Length", "single_btn_length", 160f, 10f, "px", ::notifyEngine)
-            addSafeSlider(boxSlidersContainer, "Bulge Push Depth", "bulge_depth", 42f, 2f, "px", ::notifyEngine)
-            addSafeSlider(boxSlidersContainer, "Inward Speed", "press_speed_ms", 75f, 5f, "ms", ::notifyEngine)
-            addSafeSlider(boxSlidersContainer, "Release Bounce Speed", "release_speed_ms", 180f, 10f, "ms", ::notifyEngine)
-        }
-
-        populateSliders()
+        populateBulgeSliders()
 
         btnAutoCalibrate.setOnClickListener {
             val dm = DisplayMetrics()
@@ -174,9 +236,8 @@ class MainActivity : AppCompatActivity() {
                 .putFloat("single_btn_length", screenH * 0.07f)
                 .putFloat("bulge_depth", 44f)
                 .apply()
-            populateSliders()
             notifyEngine()
-            Toast.makeText(this, "Auto-calibrated to chassis height: ${screenH.toInt()}px", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Calibrated to display height: ${screenH.toInt()}px", Toast.LENGTH_SHORT).show()
         }
 
         fun refreshExtraKeyUi() {
@@ -232,6 +293,8 @@ class MainActivity : AppCompatActivity() {
         defVal: Float,
         step: Float,
         unit: String,
+        minBound: Float,
+        maxBound: Float,
         notifyEngine: () -> Unit
     ) {
         val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
@@ -245,7 +308,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val currentVal = prefs.getFloat(key, defVal)
+        val currentVal = prefs.getFloat(key, defVal).coerceIn(minBound, maxBound)
         val titleTv = TextView(this).apply {
             text = "$label: ${currentVal.toInt()}$unit"
             textSize = 14f
@@ -264,20 +327,17 @@ class MainActivity : AppCompatActivity() {
         titleRow.addView(editBtn)
         row.addView(titleRow)
 
-        val minVal = 0f
-        val maxVal = (currentVal * 2.5f).coerceAtLeast(currentVal + 100f).coerceAtLeast(200f)
         val safeStep = if (step > 0f) step else 1f
-
         val slider = Slider(this).apply {
-            valueFrom = minVal
-            valueTo = maxVal
+            valueFrom = minBound
+            valueTo = maxBound
             stepSize = safeStep
-            value = currentVal.coerceIn(minVal, maxVal)
+            value = currentVal
             setLabelFormatter { "${it.toInt()}$unit" }
         }
 
         fun updateValue(newVal: Float) {
-            val clamped = newVal.coerceAtLeast(0f)
+            val clamped = newVal.coerceIn(minBound, maxBound)
             prefs.edit().putFloat(key, clamped).apply()
             titleTv.text = "$label: ${clamped.toInt()}$unit"
             if (clamped in slider.valueFrom..slider.valueTo) {
@@ -289,7 +349,7 @@ class MainActivity : AppCompatActivity() {
         editBtn.setOnClickListener {
             val textLayout = TextInputLayout(this).apply { setPadding(40, 16, 40, 0) }
             val input = TextInputEditText(textLayout.context).apply {
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
                 setText(prefs.getFloat(key, defVal).toInt().toString())
             }
             textLayout.addView(input)
@@ -330,6 +390,132 @@ class MainActivity : AppCompatActivity() {
         row.addView(slider)
         row.addView(stepRow)
         container.addView(row)
+    }
+
+    private fun showCodeEditorDialog(onSaved: () -> Unit) {
+        val prefs = getSharedPreferences("bezel_prefs", Context.MODE_PRIVATE)
+        val defaultCode = """
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+    #container {
+      width: 100%; height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-end;
+      align-items: center; box-sizing: border-box;
+      border-radius: 28px; background: rgba(22, 22, 26, 0.85);
+      border: 1.5px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+      backdrop-filter: blur(20px); overflow: hidden; position: relative;
+    }
+    #bar {
+      width: 100%; background: linear-gradient(180deg, #0A84FF, #0051FF);
+      height: 50%; transition: height 0.08s ease-out;
+      border-radius: 0 0 26px 26px;
+      box-shadow: 0 0 16px rgba(10, 132, 255, 0.6);
+    }
+    #percent {
+      position: absolute; top: 18px; width: 100%; text-align: center;
+      color: #FFFFFF; font-family: sans-serif; font-weight: 700;
+      font-size: 15px; text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+    }
+    #icon {
+      position: absolute; bottom: 18px; width: 100%; text-align: center;
+      color: #FFFFFF; font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="percent">50%</div>
+    <div id="bar"></div>
+    <div id="icon">🔊</div>
+  </div>
+  <script>
+    // Called live by the Android Accessibility engine at 60fps or upon button press:
+    function onVolumeChanged(volume, isMuted, rawLevel, maxLevel) {
+      const pct = Math.round(volume * 100);
+      document.getElementById('percent').innerText = pct + '%';
+      document.getElementById('bar').style.height = pct + '%';
+      document.getElementById('icon').innerText = isMuted || pct === 0 ? '🔇' : (pct > 60 ? '🔊' : '🔉');
+    }
+  </script>
+</body>
+</html>
+""".trimIndent()
+
+        val savedCode = prefs.getString("custom_panel_html_code", defaultCode) ?: defaultCode
+        val dialog = Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 20, 20, 20)
+            setBackgroundColor(0xFF161618.toInt())
+        }
+
+        val title = TextView(this).apply {
+            text = "Custom Panel Live Code Engine"
+            textSize = 17f
+            setTextColor(Color.WHITE)
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 4)
+        }
+        val sub = TextView(this).apply {
+            text = "Inject full HTML5, CSS3, Canvas, WebGL, or JavaScript. The function onVolumeChanged(volume, isMuted, raw, max) is automatically invoked."
+            textSize = 12f
+            setTextColor(0xFFAAAAAA.toInt())
+            setPadding(0, 0, 0, 12)
+        }
+        root.addView(title)
+        root.addView(sub)
+
+        val scrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.density * 360).toInt()
+            )
+        }
+
+        val codeInput = EditText(this).apply {
+            setText(savedCode)
+            setTextColor(0xFF58A6FF.toInt())
+            setBackgroundColor(0xFF0D1117.toInt())
+            textSize = 12f
+            typeface = Typeface.MONOSPACE
+            setPadding(16, 16, 16, 16)
+            isVerticalScrollBarEnabled = true
+        }
+        scrollView.addView(codeInput)
+        root.addView(scrollView)
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 16, 0, 0)
+        }
+        val resetBtn = Button(this).apply {
+            text = "Default Template"
+            setBackgroundColor(Color.TRANSPARENT)
+            setTextColor(0xFFFF453A.toInt())
+            setOnClickListener {
+                codeInput.setText(defaultCode)
+            }
+        }
+        val saveBtn = MaterialButton(this).apply {
+            text = "Save & Compile"
+            setOnClickListener {
+                prefs.edit().putString("custom_panel_html_code", codeInput.text.toString()).apply()
+                onSaved()
+                dialog.dismiss()
+                Toast.makeText(this@MainActivity, "Custom Code Saved & Applied", Toast.LENGTH_SHORT).show()
+            }
+        }
+        btnRow.addView(resetBtn)
+        btnRow.addView(saveBtn)
+        root.addView(btnRow)
+
+        dialog.setContentView(root)
+        dialog.show()
     }
 
     override fun onResume() {
