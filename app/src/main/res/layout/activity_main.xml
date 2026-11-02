@@ -4,13 +4,14 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/brand_background"
-    android:padding="20dp">
+    android:padding="16dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <!-- Status Header -->
         <TextView
             android:id="@+id/tvStatus"
             android:layout_width="wrap_content"
@@ -19,26 +20,27 @@
             android:textColor="@color/brand_accent_green"
             android:textSize="15sp"
             android:textStyle="bold"
-            android:paddingBottom="16dp" />
+            android:paddingBottom="12dp" />
 
+        <!-- Accessibility Permission Banner -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardPerm"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="24dp"
+            app:cardCornerRadius="20dp"
             app:cardBackgroundColor="@color/brand_card">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Accessibility service is disabled. Enable it to track physical buttons and render bezel overlays."
+                    android:text="Accessibility service is disabled. Enable it to detect physical buttons and render overlays."
                     android:textColor="@color/brand_accent_orange"
                     android:textSize="14sp" />
 
@@ -46,23 +48,24 @@
                     android:id="@+id/btnPerm"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="10dp"
                     android:text="Enable in Accessibility" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Live Bezel & Volume Test Card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="24dp"
+            app:cardCornerRadius="20dp"
             app:cardBackgroundColor="@color/brand_surface">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -93,28 +96,140 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:layout_marginStart="6dp"
-                        android:text="Test Slider Panel" />
+                        android:text="Test Volume Panel" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Volume Panel Master Controls & Style Card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="24dp"
+            app:cardCornerRadius="20dp"
             app:cardBackgroundColor="@color/brand_surface">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Custom Volume Panel Style"
+                    android:text="Volume Panel Master Engine"
+                    android:textColor="@color/brand_text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchEnableVolumePanel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Enable Custom Volume Panel" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Disable to let stock OS volume handle the display while preserving bezel animations."
+                    android:textColor="@color/brand_text_secondary"
+                    android:textSize="12sp"
+                    android:paddingBottom="10dp" />
+
+                <LinearLayout
+                    android:id="@+id/boxPanelOptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Panel Theme / Engine Mode"
+                        android:textColor="@color/brand_text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:paddingTop="6dp" />
+
+                    <Spinner
+                        android:id="@+id/spinnerPanelStyle"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="4dp" />
+
+                    <!-- Live Code Editor Trigger Button -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnOpenCodeEditor"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="Open Custom Code / Animation Studio"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Button Behavior & Volume Steps Tuning -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="20dp"
+            app:cardBackgroundColor="@color/brand_surface">
+
+            <LinearLayout
+                android:id="@+id/boxButtonBehaviorContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Physical Button &amp; Volume Tuning"
+                    android:textColor="@color/brand_text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchContinuousPress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Continuous Press (Hold to Scroll Volume)" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchHaptics"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Haptic Compression Feedback" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Panel Geometry, Scaling & Rotation Studio -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="20dp"
+            app:cardBackgroundColor="@color/brand_surface">
+
+            <LinearLayout
+                android:id="@+id/boxPanelGeometryContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Panel Geometry, Rotation &amp; Scale"
                     android:textColor="@color/brand_text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -122,36 +237,33 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Select an OEM slider panel to override your stock Android volume dialog."
+                    android:text="Freely scale, resize, position, and rotate the volume panel in 2D space."
                     android:textColor="@color/brand_text_secondary"
-                    android:textSize="13sp"
-                    android:paddingTop="4dp"
+                    android:textSize="12sp"
+                    android:paddingTop="2dp"
                     android:paddingBottom="8dp" />
-
-                <Spinner
-                    android:id="@+id/spinnerPanelStyle"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Bezel Bulge Visuals & Chassis Calibration -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="24dp"
+            app:cardCornerRadius="20dp"
             app:cardBackgroundColor="@color/brand_surface">
 
             <LinearLayout
+                android:id="@+id/boxBulgeContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Bezel Squeeze Shape &amp; Finish"
+                    android:text="Bezel Squeeze Bulge Customization"
                     android:textColor="@color/brand_text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -175,7 +287,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginTop="12dp">
+                    android:layout_marginTop="10dp">
 
                     <View
                         android:id="@+id/colorPreview"
@@ -188,32 +300,9 @@
                         style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="16dp"
-                        android:text="Pick Custom Color" />
+                        android:layout_marginStart="14dp"
+                        android:text="Pick Bulge Color" />
                 </LinearLayout>
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="24dp"
-            app:cardBackgroundColor="@color/brand_surface">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="20dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Chassis Calibration &amp; Dimensions"
-                    android:textColor="@color/brand_text_primary"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/switchRightEdge"
@@ -226,45 +315,32 @@
                     android:id="@+id/switchUnified"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="6dp"
                     android:text="Unified Single Volume Rocker" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchHaptics"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Haptic Compression Feedback" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnAutoCalibrate"
                     style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="10dp"
                     android:text="Auto-Detect Chassis &amp; Calibrate" />
-
-                <LinearLayout
-                    android:id="@+id/boxSlidersContainer"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:layout_marginTop="8dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Extra Hardware Key Card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="32dp"
-            app:cardCornerRadius="24dp"
+            app:cardCornerRadius="20dp"
             app:cardBackgroundColor="@color/brand_surface">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="16dp">
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -282,7 +358,7 @@
                     android:textColor="@color/brand_text_secondary"
                     android:textSize="13sp"
                     android:paddingTop="4dp"
-                    android:paddingBottom="12dp" />
+                    android:paddingBottom="10dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnMapExtra"
