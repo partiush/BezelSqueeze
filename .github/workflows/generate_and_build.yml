@@ -15,14 +15,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Scaffold Project Files
+      - name: Scaffold Complete Android Project
         run: |
           mkdir -p gradle/wrapper
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/java/com/edge/bezelmorph
 
-          # 1. gradle.properties (Fixes checkDebugAarMetadata AndroidX failure)
+          # 1. gradle.properties
           cat << 'EOF' > gradle.properties
           android.useAndroidX=true
           android.nonTransitiveRClass=true
@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
+                  versionCode = 2
+                  versionName = "2.0"
               }
 
               compileOptions {
@@ -93,18 +93,24 @@ jobs:
           }
           EOF
 
-          # 5. Manifest
+          # 5. Manifest (Boot + Keepalive Foreground Permissions)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
               <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+
               <application
                   android:allowBackup="true"
                   android:hardwareAccelerated="true"
                   android:label="@string/app_name"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.MorphEdge">
+
                   <activity
                       android:name=".MainActivity"
                       android:configChanges="orientation|screenSize"
@@ -114,9 +120,11 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+
                   <service
                       android:name=".HardwareKeyMonitorService"
                       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:foregroundServiceType="specialUse"
                       android:exported="true">
                       <intent-filter>
                           <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -125,6 +133,17 @@ jobs:
                           android:name="android.accessibilityservice"
                           android:resource="@xml/button_event_service_config" />
                   </service>
+
+                  <receiver
+                      android:name=".BootCompletedReceiver"
+                      android:enabled="true"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                          <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                      </intent-filter>
+                  </receiver>
               </application>
           </manifest>
           EOF
@@ -133,9 +152,9 @@ jobs:
           cat << 'EOF' > app/src/main/res/xml/button_event_service_config.xml
           <?xml version="1.0" encoding="utf-8"?>
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-              android:accessibilityEventTypes=""
+              android:accessibilityEventTypes="typeAllMask"
               android:accessibilityFeedbackType="feedbackGeneric"
-              android:accessibilityFlags="flagRequestFilterKeyEvents"
+              android:accessibilityFlags="flagRequestFilterKeyEvents|flagIncludeNotImportantViews"
               android:canRequestFilterKeyEvents="true"
               android:canRetrieveWindowContent="false"
               android:description="@string/service_description" />
@@ -143,22 +162,43 @@ jobs:
 
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
-              <string name="app_name">Bezel Morph</string>
-              <string name="service_description">Real-time edge deflection sync for physical keys.</string>
+              <string name="app_name">Edge Display Morph</string>
+              <string name="service_description">Synchronizes real-time hardware button deflections with perimeter graphics.</string>
           </resources>
           EOF
 
           cat << 'EOF' > app/src/main/res/values/styles.xml
           <resources>
               <style name="Theme.MorphEdge" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-                  <item name="android:windowBackground">#0F0F0F</item>
+                  <item name="android:windowBackground">#0B0B0B</item>
                   <item name="android:statusBarColor">#000000</item>
                   <item name="android:navigationBarColor">#000000</item>
               </style>
           </resources>
           EOF
 
-          # 7. Persistent Configuration Store
+          # 7. Boot Completed Receiver
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BootCompletedReceiver.kt
+          package com.edge.bezelmorph
+
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+
+          class BootCompletedReceiver : BroadcastReceiver() {
+              override fun onReceive(context: Context, intent: Intent) {
+                  // Accessibility services registered by the system persist across boot automatically.
+                  // This broadcast ensures preferences and component states are initialized immediately.
+                  if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == "android.intent.action.QUICKBOOT_POWERON") {
+                      val store = MorphConfigStore(context)
+                      // Trigger cache warmup
+                      val _unused = store.isLeftEdge
+                  }
+              }
+          }
+          EOF
+
+          # 8. Configuration Storage
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -190,7 +230,7 @@ jobs:
           }
           EOF
 
-          # 8. High-Fidelity Spline & Specular Rim Engine
+          # 9. Surface View with Bezier Arc and Specular Rim
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -312,14 +352,19 @@ jobs:
           }
           EOF
 
-          # 9. Hardware-Linked Interceptor
+          # 10. Crash-Proof Persistent Accessibility Service
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
           import android.accessibilityservice.AccessibilityService
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
           import android.graphics.PixelFormat
+          import android.os.Build
           import android.view.*
           import android.view.accessibility.AccessibilityEvent
+          import androidx.core.app.NotificationCompat
 
           class HardwareKeyMonitorService : AccessibilityService() {
               private var wm: WindowManager? = null
@@ -327,33 +372,67 @@ jobs:
               private lateinit var store: MorphConfigStore
               private var pressedKey: Int = 0
 
-              override fun onCreate() {
-                  super.onCreate()
+              override fun onServiceConnected() {
+                  super.onServiceConnected()
                   store = MorphConfigStore(this)
-                  setupOverlay()
+                  startPersistentForeground()
+                  setupOverlaySafely()
               }
 
-              private fun setupOverlay() {
-                  wm = getSystemService(WINDOW_SERVICE) as WindowManager
-                  val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                          WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                          WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                          WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                          WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-
-                  val params = WindowManager.LayoutParams(
-                      WindowManager.LayoutParams.MATCH_PARENT,
-                      WindowManager.LayoutParams.MATCH_PARENT,
-                      WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                      flags,
-                      PixelFormat.TRANSLUCENT
-                  )
-                  overlay = BezelSurfaceView(this).apply {
-                      isLeftEdge = store.isLeftEdge
-                      bulgeLength = store.lengthPx
-                      maxDepth = store.depthPx
+              private fun startPersistentForeground() {
+                  val channelId = "bezel_service_channel"
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val channel = NotificationChannel(
+                          channelId,
+                          "Edge Morph Service",
+                          NotificationManager.IMPORTANCE_MIN
+                      ).apply {
+                          description = "Ensures zero latency edge deformation sync"
+                          setShowBadge(false)
+                      }
+                      val nm = getSystemService(NotificationManager::class.java)
+                      nm?.createNotificationChannel(channel)
                   }
-                  wm?.addView(overlay, params)
+
+                  val notification: Notification = NotificationCompat.Builder(this, channelId)
+                      .setContentTitle("Edge Morph Active")
+                      .setContentText("Hardware button monitor running")
+                      .setSmallIcon(android.R.drawable.ic_menu_crop)
+                      .setPriority(NotificationCompat.PRIORITY_MIN)
+                      .setOngoing(true)
+                      .build()
+
+                  startForeground(1001, notification)
+              }
+
+              private fun setupOverlaySafely() {
+                  try {
+                      if (overlay != null) return
+                      wm = getSystemService(WINDOW_SERVICE) as WindowManager
+
+                      val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                              WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                              WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                              WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                              WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+
+                      val params = WindowManager.LayoutParams(
+                          WindowManager.LayoutParams.MATCH_PARENT,
+                          WindowManager.LayoutParams.MATCH_PARENT,
+                          WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                          flags,
+                          PixelFormat.TRANSLUCENT
+                      )
+
+                      overlay = BezelSurfaceView(this).apply {
+                          isLeftEdge = store.isLeftEdge
+                          bulgeLength = store.lengthPx
+                          maxDepth = store.depthPx
+                      }
+                      wm?.addView(overlay, params)
+                  } catch (e: Exception) {
+                      e.printStackTrace()
+                  }
               }
 
               override fun onKeyEvent(event: KeyEvent): Boolean {
@@ -387,25 +466,32 @@ jobs:
 
               override fun onDestroy() {
                   super.onDestroy()
-                  overlay?.let { wm?.removeView(it) }
+                  try {
+                      overlay?.let { wm?.removeView(it) }
+                  } catch (ignored: Exception) {}
               }
           }
           EOF
 
-          # 10. Live Calibration Activity
+          # 11. Main Activity (Auto-Hides Permission UI Once Activated)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
+          import android.accessibilityservice.AccessibilityServiceInfo
+          import android.content.Context
           import android.content.Intent
           import android.os.Bundle
           import android.provider.Settings
           import android.view.Gravity
+          import android.view.View
+          import android.view.accessibility.AccessibilityManager
           import android.widget.*
           import androidx.appcompat.app.AppCompatActivity
 
           class MainActivity : AppCompatActivity() {
               private lateinit var store: MorphConfigStore
               private lateinit var preview: BezelSurfaceView
+              private var permissionButton: Button? = null
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
@@ -420,7 +506,7 @@ jobs:
                   root.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
                   val scroll = ScrollView(this).apply {
-                      setBackgroundColor(0xDD1E1E1E.toInt())
+                      setBackgroundColor(0xDD181818.toInt())
                       setPadding(32, 24, 32, 24)
                   }
                   val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -467,15 +553,15 @@ jobs:
                       refresh(store.volumeUpRatio)
                   })
 
-                  val btn = Button(this).apply {
-                      text = "Enable Hardware Monitoring"
+                  permissionButton = Button(this).apply {
+                      text = "Grant System Access"
                       setBackgroundColor(0xFF2B5BE6.toInt())
                       setTextColor(0xFFFFFFFF.toInt())
                       setOnClickListener {
                           startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                       }
                   }
-                  panel.addView(btn)
+                  panel.addView(permissionButton)
 
                   scroll.addView(panel)
                   val cardParams = FrameLayout.LayoutParams(
@@ -488,7 +574,32 @@ jobs:
                   root.addView(scroll, cardParams)
 
                   setContentView(root)
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  checkAndHidePermissionLayout()
                   refresh(store.volumeUpRatio)
+              }
+
+              private fun checkAndHidePermissionLayout() {
+                  if (isAccessibilityEnabled()) {
+                      // Disappears from UI completely once enabled
+                      permissionButton?.visibility = View.GONE
+                  } else {
+                      permissionButton?.visibility = View.VISIBLE
+                  }
+              }
+
+              private fun isAccessibilityEnabled(): Boolean {
+                  val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+                  val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                  for (service in enabledServices) {
+                      if (service.id.contains(packageName)) {
+                          return true
+                      }
+                  }
+                  return false
               }
 
               private fun addSlider(title: String, initial: Int, minVal: Int, maxVal: Int, onChange: (Int) -> Unit): LinearLayout {
