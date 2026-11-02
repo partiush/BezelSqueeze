@@ -15,7 +15,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Scaffold Complete Project
+      - name: Scaffold Project Files
         run: |
           mkdir -p gradle/wrapper
           mkdir -p app/src/main/res/values
@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 28
                   targetSdk = 34
-                  versionCode = 9
-                  versionName = "9.0"
+                  versionCode = 10
+                  versionName = "10.0"
               }
 
               compileOptions {
@@ -92,7 +92,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest (Cutout Inset Bypass + Foreground Service + Boot Receiver)
+          # 5. Manifest (Display Cutout Mode + Background Service + Haptics)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -210,12 +210,16 @@ jobs:
                   get() = prefs.getFloat("v_down_ratio", 0.32f)
                   set(v) = prefs.edit().putFloat("v_down_ratio", v).apply()
 
-              var halfLengthL: Float
-                  get() = prefs.getFloat("half_length_L", 150f) // L = 150px (Total span 2L = 300px)
-                  set(v) = prefs.edit().putFloat("half_length_L", v).apply()
+              var flatTopHalfLengthY0: Float
+                  get() = prefs.getFloat("y0_val", 50f) // Half-length of flat plateau (total flat section = 2*y0 = 100px)
+                  set(v) = prefs.edit().putFloat("y0_val", v).apply()
+
+              var blendTransitionW: Float
+                  get() = prefs.getFloat("w_val", 85f) // Transition width w to bezel edge
+                  set(v) = prefs.edit().putFloat("w_val", v).apply()
 
               var peakAmplitudeA: Float
-                  get() = prefs.getFloat("peak_amp_A", 60f) // A = 60px max compression depth
+                  get() = prefs.getFloat("peak_amp_A", 52f) // Peak inward intrusion A
                   set(v) = prefs.edit().putFloat("peak_amp_A", v).apply()
 
               var isLeftEdge: Boolean
@@ -224,7 +228,7 @@ jobs:
           }
           EOF
 
-          # 9. Quintic Hermite C^2 Spline Engine with Sub-Critical Harmonic Oscillator
+          # 9. Exact C^2 Flat-Top Blend Engine with 2nd-Order Harmonic Oscillator
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -245,28 +249,34 @@ jobs:
 
               var isLeftEdge: Boolean = false
               var centerY: Float = 600f
-              var L: Float = 150f // Half-span length
-              var A: Float = 60f  // Peak inward amplitude
 
-              // State variables for numerical spring integration
+              // Formulation B Parameters:
+              // y0: Half-length of flat plateau matching physical key face
+              // w:  Blend transition width back into screen boundary
+              // A:  Max inward depth
+              var y0: Float = 50f
+              var w: Float = 85f
+              var A: Float = 52f
+
+              // Second-Order Harmonic Oscillator state
               private var currentA: Float = 0f
               private var velocityA: Float = 0f
               private var targetA: Float = 0f
               private var isSimulating: Boolean = false
               private var lastFrameTimeNs: Long = 0L
 
-              // Damped harmonic oscillator constants:
-              // omega_n = 25.13 rad/s (tau ~ 0.25s)
-              // zeta = 0.84 (sub-critically damped, soft tactile settle)
-              private val omegaN: Float = 25.13f
-              private val zeta: Float = 0.84f
+              // Exact spring configuration:
+              // omega_n = 28.0 rad/s (sharp, authoritative response)
+              // zeta = 0.76 (controlled sub-critical tactile recoil)
+              private val omegaN: Float = 28.0f
+              private val zeta: Float = 0.76f
 
               private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
               private val choreographer = Choreographer.getInstance()
 
               private val morphPath = Path()
 
-              // Pure Pitch Black OLED Bezel Paint
+              // Solid Pure Jet OLED Black
               private val bezelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
@@ -274,7 +284,7 @@ jobs:
 
               fun onHardwareButtonDown() {
                   targetA = A
-                  velocityA = 850f // Initial kinetic downstroke impulse
+                  velocityA = 900f // Instantaneous initial kinetic energy
                   triggerHaptic()
                   startSimulation()
               }
@@ -313,15 +323,16 @@ jobs:
                   }
                   lastFrameTimeNs = frameTimeNs
 
-                  // Harmonic oscillator acceleration: A''(t) = -omega_n^2 * (A - target) - 2 * zeta * omega_n * A'
+                  // Harmonic oscillator differential equation:
+                  // A''(t) = -omega_n^2 * (A(t) - target) - 2 * zeta * omega_n * A'(t)
                   val displacement = currentA - targetA
                   val accel = -(omegaN * omegaN * displacement) - (2f * zeta * omegaN * velocityA)
 
                   velocityA += accel * dt
                   currentA += velocityA * dt
 
-                  // Settle condition
-                  if (targetA == 0f && abs(velocityA) < 0.2f && abs(currentA) < 0.2f) {
+                  // Rest condition
+                  if (targetA == 0f && abs(velocityA) < 0.15f && abs(currentA) < 0.15f) {
                       currentA = 0f
                       velocityA = 0f
                       isSimulating = false
@@ -348,47 +359,54 @@ jobs:
                   super.onDraw(canvas)
                   if (currentA <= 0.001f) return
 
-                  val w = width.toFloat()
-                  val activeL = L
-                  val yStart = centerY - activeL
-                  val yEnd = centerY + activeL
+                  val screenW = width.toFloat()
+                  val totalHalfSpan = y0 + w
+                  val yTop = centerY - totalHalfSpan
+                  val yBottom = centerY + totalHalfSpan
 
                   morphPath.reset()
 
-                  // Discrete sampling evaluating the C^2 Quintic Smoothstep:
-                  // u = 1 - |y - y0| / L
-                  // x(y) = A(t) * (6u^5 - 15u^4 + 10u^3)
-                  val steps = 64
-                  val stepSize = (2f * activeL) / steps
+                  // Piecewise evaluation of Formulation B:
+                  // For |y - y0_center| <= y0: x = A(t)
+                  // For y0 < |y - y0_center| < y0 + w: u = (|y| - y0) / w, x = A(t) * (1 - 10u^3 + 15u^4 - 6u^5)
+                  // For |y| >= y0 + w: x = 0
+                  val steps = 72
+                  val stepSize = (2f * totalHalfSpan) / steps
 
                   if (isLeftEdge) {
-                      morphPath.moveTo(0f, yStart)
+                      morphPath.moveTo(0f, yTop)
                       for (i in 0..steps) {
-                          val curY = yStart + (i * stepSize)
-                          val d = abs(curY - centerY)
-                          if (d <= activeL) {
-                              val u = 1.0f - (d / activeL)
-                              val profile = u * u * u * (u * (u * 6.0f - 15.0f) + 10.0f)
-                              val x = currentA * profile
-                              morphPath.lineTo(x, curY)
+                          val curY = yTop + (i * stepSize)
+                          val dist = abs(curY - centerY)
+                          val x = when {
+                              dist <= y0 -> currentA
+                              dist < totalHalfSpan -> {
+                                  val u = (dist - y0) / w
+                                  currentA * (1.0f - (10.0f * u.pow(3)) + (15.0f * u.pow(4)) - (6.0f * u.pow(5)))
+                              }
+                              else -> 0f
                           }
+                          morphPath.lineTo(x, curY)
                       }
-                      morphPath.lineTo(0f, yEnd)
+                      morphPath.lineTo(0f, yBottom)
                       morphPath.close()
                   } else {
-                      val xEdge = w
-                      morphPath.moveTo(xEdge, yStart)
+                      val xEdge = screenW
+                      morphPath.moveTo(xEdge, yTop)
                       for (i in 0..steps) {
-                          val curY = yStart + (i * stepSize)
-                          val d = abs(curY - centerY)
-                          if (d <= activeL) {
-                              val u = 1.0f - (d / activeL)
-                              val profile = u * u * u * (u * (u * 6.0f - 15.0f) + 10.0f)
-                              val x = currentA * profile
-                              morphPath.lineTo(xEdge - x, curY)
+                          val curY = yTop + (i * stepSize)
+                          val dist = abs(curY - centerY)
+                          val x = when {
+                              dist <= y0 -> currentA
+                              dist < totalHalfSpan -> {
+                                  val u = (dist - y0) / w
+                                  currentA * (1.0f - (10.0f * u.pow(3)) + (15.0f * u.pow(4)) - (6.0f * u.pow(5)))
+                              }
+                              else -> 0f
                           }
+                          morphPath.lineTo(xEdge - x, curY)
                       }
-                      morphPath.lineTo(xEdge, yEnd)
+                      morphPath.lineTo(xEdge, yBottom)
                       morphPath.close()
                   }
 
@@ -473,7 +491,8 @@ jobs:
 
                       overlay = BezelSurfaceView(this).apply {
                           isLeftEdge = store.isLeftEdge
-                          L = store.halfLengthL
+                          y0 = store.flatTopHalfLengthY0
+                          w = store.blendTransitionW
                           A = store.peakAmplitudeA
                       }
                       wm?.addView(overlay, params)
@@ -492,7 +511,8 @@ jobs:
                               activeKey = code
                               overlay?.let { view ->
                                   view.isLeftEdge = store.isLeftEdge
-                                  view.L = store.halfLengthL
+                                  view.y0 = store.flatTopHalfLengthY0
+                                  view.w = store.blendTransitionW
                                   view.A = store.peakAmplitudeA
                                   view.centerY = view.height * ratio
                                   view.onHardwareButtonDown()
@@ -545,7 +565,8 @@ jobs:
                   val container = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
                   preview = BezelSurfaceView(this).apply {
                       isLeftEdge = store.isLeftEdge
-                      L = store.halfLengthL
+                      y0 = store.flatTopHalfLengthY0
+                      w = store.blendTransitionW
                       A = store.peakAmplitudeA
                   }
                   container.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
@@ -588,13 +609,19 @@ jobs:
                       preview.setPreviewStatic(1.0f)
                   })
 
-                  // Half-length L slider (70px to 300px, meaning total span 2*L is 140px to 600px)
-                  content.addView(buildSlider("Span Half-Length (L)", store.halfLengthL.toInt(), 70, 300) {
-                      store.halfLengthL = it.toFloat()
+                  // Flat top half-length y0 (20px to 140px)
+                  content.addView(buildSlider("Flat Key Plateau (y0)", store.flatTopHalfLengthY0.toInt(), 20, 140) {
+                      store.flatTopHalfLengthY0 = it.toFloat()
                       updatePreview()
                   })
 
-                  // Peak Amplitude A slider (15px to 120px)
+                  // Blend shoulder width w (30px to 200px)
+                  content.addView(buildSlider("Shoulder Blend Width (w)", store.blendTransitionW.toInt(), 30, 200) {
+                      store.blendTransitionW = it.toFloat()
+                      updatePreview()
+                  })
+
+                  // Peak Intrusion Amplitude A (15px to 120px)
                   content.addView(buildSlider("Peak Intrusion (A)", store.peakAmplitudeA.toInt(), 15, 120) {
                       store.peakAmplitudeA = it.toFloat()
                       updatePreview()
@@ -676,7 +703,8 @@ jobs:
 
               private fun updatePreview() {
                   preview.isLeftEdge = store.isLeftEdge
-                  preview.L = store.halfLengthL
+                  preview.y0 = store.flatTopHalfLengthY0
+                  preview.w = store.blendTransitionW
                   preview.A = store.peakAmplitudeA
                   preview.post {
                       preview.centerY = preview.height * store.volumeUpRatio
