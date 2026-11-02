@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 28
                   targetSdk = 34
-                  versionCode = 10
-                  versionName = "10.0"
+                  versionCode = 11
+                  versionName = "11.0"
               }
 
               compileOptions {
@@ -92,7 +92,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest (Display Cutout Mode + Background Service + Haptics)
+          # 5. Manifest (Keepalive Foreground Service + Boot Persistence + Cutout Bypass)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -102,6 +102,7 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
               <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
 
               <application
                   android:allowBackup="true"
@@ -124,6 +125,7 @@ jobs:
                       android:name=".HardwareKeyMonitorService"
                       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
                       android:foregroundServiceType="specialUse"
+                      android:stopWithTask="false"
                       android:exported="true">
                       <intent-filter>
                           <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -140,6 +142,7 @@ jobs:
                       <intent-filter>
                           <action android:name="android.intent.action.BOOT_COMPLETED" />
                           <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                           <category android:name="android.intent.category.DEFAULT" />
                       </intent-filter>
                   </receiver>
@@ -176,7 +179,7 @@ jobs:
           </resources>
           EOF
 
-          # 7. Boot Receiver
+          # 7. Persistent Boot Receiver
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BootCompletedReceiver.kt
           package com.edge.bezelmorph
 
@@ -186,13 +189,14 @@ jobs:
 
           class BootCompletedReceiver : BroadcastReceiver() {
               override fun onReceive(context: Context, intent: Intent) {
+                  // Warms preferences and verifies accessibility service registration
                   val store = MorphConfigStore(context)
                   val _unused = store.isLeftEdge
               }
           }
           EOF
 
-          # 8. Config Store
+          # 8. Expanded Config Store with Kinematic Parameters
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -211,16 +215,29 @@ jobs:
                   set(v) = prefs.edit().putFloat("v_down_ratio", v).apply()
 
               var flatTopHalfLengthY0: Float
-                  get() = prefs.getFloat("y0_val", 50f) // Half-length of flat plateau (total flat section = 2*y0 = 100px)
+                  get() = prefs.getFloat("y0_val", 50f)
                   set(v) = prefs.edit().putFloat("y0_val", v).apply()
 
               var blendTransitionW: Float
-                  get() = prefs.getFloat("w_val", 85f) // Transition width w to bezel edge
+                  get() = prefs.getFloat("w_val", 85f)
                   set(v) = prefs.edit().putFloat("w_val", v).apply()
 
               var peakAmplitudeA: Float
-                  get() = prefs.getFloat("peak_amp_A", 52f) // Peak inward intrusion A
+                  get() = prefs.getFloat("peak_amp_A", 52f)
                   set(v) = prefs.edit().putFloat("peak_amp_A", v).apply()
+
+              // Speed & Physics Controls
+              var speedOverall: Float
+                  get() = prefs.getFloat("speed_omega", 28.0f) // Natural Frequency (15 to 45)
+                  set(v) = prefs.edit().putFloat("speed_omega", v).apply()
+
+              var inwardImpulse: Float
+                  get() = prefs.getFloat("speed_inward", 950f) // Initial Push Velocity (400 to 2000)
+                  set(v) = prefs.edit().putFloat("speed_inward", v).apply()
+
+              var outwardDamping: Float
+                  get() = prefs.getFloat("speed_outward_zeta", 0.76f) // Recoil Damping (0.60 to 0.98)
+                  set(v) = prefs.edit().putFloat("speed_outward_zeta", v).apply()
 
               var isLeftEdge: Boolean
                   get() = prefs.getBoolean("is_left_side", false)
@@ -228,13 +245,14 @@ jobs:
           }
           EOF
 
-          # 9. Exact C^2 Flat-Top Blend Engine with 2nd-Order Harmonic Oscillator
+          # 9. Ultra-Responsive Surface Engine with Micro-Click Lock
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
           import android.content.Context
           import android.graphics.*
           import android.os.Build
+          import android.os.SystemClock
           import android.os.VibrationEffect
           import android.os.Vibrator
           import android.util.AttributeSet
@@ -250,48 +268,54 @@ jobs:
               var isLeftEdge: Boolean = false
               var centerY: Float = 600f
 
-              // Formulation B Parameters:
-              // y0: Half-length of flat plateau matching physical key face
-              // w:  Blend transition width back into screen boundary
-              // A:  Max inward depth
               var y0: Float = 50f
               var w: Float = 85f
               var A: Float = 52f
 
-              // Second-Order Harmonic Oscillator state
+              // Physics Sliders
+              var omegaN: Float = 28.0f
+              var inwardVelocity: Float = 950f
+              var zeta: Float = 0.76f
+
+              // Oscillator State
               private var currentA: Float = 0f
               private var velocityA: Float = 0f
               private var targetA: Float = 0f
               private var isSimulating: Boolean = false
               private var lastFrameTimeNs: Long = 0L
 
-              // Exact spring configuration:
-              // omega_n = 28.0 rad/s (sharp, authoritative response)
-              // zeta = 0.76 (controlled sub-critical tactile recoil)
-              private val omegaN: Float = 28.0f
-              private val zeta: Float = 0.76f
+              // Micro-click Protection: Holds full outward push for at least 85ms even on 1ms click
+              private var downTimestampMs: Long = 0L
+              private var isReleasePending: Boolean = false
+              private val minHoldDurationMs: Long = 85L
 
               private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
               private val choreographer = Choreographer.getInstance()
 
               private val morphPath = Path()
-
-              // Solid Pure Jet OLED Black
               private val bezelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
               }
 
               fun onHardwareButtonDown() {
+                  downTimestampMs = SystemClock.uptimeMillis()
+                  isReleasePending = false
                   targetA = A
-                  velocityA = 900f // Instantaneous initial kinetic energy
+                  velocityA = inwardVelocity
                   triggerHaptic()
                   startSimulation()
               }
 
               fun onHardwareButtonUp() {
-                  targetA = 0f
-                  startSimulation()
+                  val elapsed = SystemClock.uptimeMillis() - downTimestampMs
+                  if (elapsed < minHoldDurationMs) {
+                      // Ultra-fast click detected: guarantee smooth expansion before triggering release
+                      isReleasePending = true
+                  } else {
+                      targetA = 0f
+                      startSimulation()
+                  }
               }
 
               fun setPreviewStatic(ratio: Float) {
@@ -316,6 +340,12 @@ jobs:
               override fun doFrame(frameTimeNs: Long) {
                   if (!isSimulating) return
 
+                  val now = SystemClock.uptimeMillis()
+                  if (isReleasePending && (now - downTimestampMs >= minHoldDurationMs)) {
+                      isReleasePending = false
+                      targetA = 0f
+                  }
+
                   val dt = if (lastFrameTimeNs > 0L) {
                       ((frameTimeNs - lastFrameTimeNs) / 1_000_000_000f).coerceIn(0.004f, 0.024f)
                   } else {
@@ -323,16 +353,14 @@ jobs:
                   }
                   lastFrameTimeNs = frameTimeNs
 
-                  // Harmonic oscillator differential equation:
-                  // A''(t) = -omega_n^2 * (A(t) - target) - 2 * zeta * omega_n * A'(t)
+                  // Damped Harmonic Oscillator with dynamic frequency & damping
                   val displacement = currentA - targetA
                   val accel = -(omegaN * omegaN * displacement) - (2f * zeta * omegaN * velocityA)
 
                   velocityA += accel * dt
                   currentA += velocityA * dt
 
-                  // Rest condition
-                  if (targetA == 0f && abs(velocityA) < 0.15f && abs(currentA) < 0.15f) {
+                  if (targetA == 0f && !isReleasePending && abs(velocityA) < 0.15f && abs(currentA) < 0.15f) {
                       currentA = 0f
                       velocityA = 0f
                       isSimulating = false
@@ -365,11 +393,6 @@ jobs:
                   val yBottom = centerY + totalHalfSpan
 
                   morphPath.reset()
-
-                  // Piecewise evaluation of Formulation B:
-                  // For |y - y0_center| <= y0: x = A(t)
-                  // For y0 < |y - y0_center| < y0 + w: u = (|y| - y0) / w, x = A(t) * (1 - 10u^3 + 15u^4 - 6u^5)
-                  // For |y| >= y0 + w: x = 0
                   val steps = 72
                   val stepSize = (2f * totalHalfSpan) / steps
 
@@ -415,7 +438,7 @@ jobs:
           }
           EOF
 
-          # 10. Hardware Service with Cutout Inset Bypass
+          # 10. Foreground Kept-Alive Accessibility Service
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -440,6 +463,10 @@ jobs:
                   store = MorphConfigStore(this)
                   startPersistentForeground()
                   attachOverlay()
+              }
+
+              override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
+                  return START_STICKY
               }
 
               private fun startPersistentForeground() {
@@ -494,6 +521,9 @@ jobs:
                           y0 = store.flatTopHalfLengthY0
                           w = store.blendTransitionW
                           A = store.peakAmplitudeA
+                          omegaN = store.speedOverall
+                          inwardVelocity = store.inwardImpulse
+                          zeta = store.outwardDamping
                       }
                       wm?.addView(overlay, params)
                   } catch (e: Exception) {
@@ -514,6 +544,9 @@ jobs:
                                   view.y0 = store.flatTopHalfLengthY0
                                   view.w = store.blendTransitionW
                                   view.A = store.peakAmplitudeA
+                                  view.omegaN = store.speedOverall
+                                  view.inwardVelocity = store.inwardImpulse
+                                  view.zeta = store.outwardDamping
                                   view.centerY = view.height * ratio
                                   view.onHardwareButtonDown()
                               }
@@ -538,7 +571,7 @@ jobs:
           }
           EOF
 
-          # 11. MainActivity with Live Mathematical Calibration
+          # 11. MainActivity with Speed & Transition Controls
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -568,6 +601,9 @@ jobs:
                       y0 = store.flatTopHalfLengthY0
                       w = store.blendTransitionW
                       A = store.peakAmplitudeA
+                      omegaN = store.speedOverall
+                      inwardVelocity = store.inwardImpulse
+                      zeta = store.outwardDamping
                   }
                   container.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
@@ -578,7 +614,7 @@ jobs:
                   val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
                   val title = TextView(this).apply {
-                      text = "Physical Edge Alignment"
+                      text = "Physical Edge & Physics Tuning"
                       setTextColor(0xFFFFFFFF.toInt())
                       textSize = 18f
                       setPadding(0, 0, 0, 16)
@@ -609,22 +645,43 @@ jobs:
                       preview.setPreviewStatic(1.0f)
                   })
 
-                  // Flat top half-length y0 (20px to 140px)
                   content.addView(buildSlider("Flat Key Plateau (y0)", store.flatTopHalfLengthY0.toInt(), 20, 140) {
                       store.flatTopHalfLengthY0 = it.toFloat()
                       updatePreview()
                   })
 
-                  // Blend shoulder width w (30px to 200px)
                   content.addView(buildSlider("Shoulder Blend Width (w)", store.blendTransitionW.toInt(), 30, 200) {
                       store.blendTransitionW = it.toFloat()
                       updatePreview()
                   })
 
-                  // Peak Intrusion Amplitude A (15px to 120px)
                   content.addView(buildSlider("Peak Intrusion (A)", store.peakAmplitudeA.toInt(), 15, 120) {
                       store.peakAmplitudeA = it.toFloat()
                       updatePreview()
+                  })
+
+                  // Speed Sliders
+                  val physicsHeader = TextView(this).apply {
+                      text = "Dynamics & Velocity Tuning"
+                      setTextColor(0xFF5389FF.toInt())
+                      textSize = 15f
+                      setPadding(0, 16, 0, 8)
+                  }
+                  content.addView(physicsHeader)
+
+                  content.addView(buildSlider("Overall Speed (Natural Frequency)", store.speedOverall.toInt(), 15, 55) {
+                      store.speedOverall = it.toFloat()
+                      preview.omegaN = store.speedOverall
+                  })
+
+                  content.addView(buildSlider("Inward Push Speed", (store.inwardImpulse / 10).toInt(), 40, 220) {
+                      store.inwardImpulse = (it * 10).toFloat()
+                      preview.inwardVelocity = store.inwardImpulse
+                  })
+
+                  content.addView(buildSlider("Outward Recoil Damping", (store.outwardDamping * 100).toInt(), 50, 98) {
+                      store.outwardDamping = it / 100f
+                      preview.zeta = store.outwardDamping
                   })
 
                   accessButton = Button(this).apply {
@@ -676,7 +733,7 @@ jobs:
               private fun buildSlider(name: String, current: Int, min: Int, max: Int, onVal: (Int) -> Unit): LinearLayout {
                   val box = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      setPadding(0, 10, 0, 10)
+                      setPadding(0, 8, 0, 8)
                   }
                   val txt = TextView(this).apply {
                       text = "$name: $current"
@@ -706,6 +763,9 @@ jobs:
                   preview.y0 = store.flatTopHalfLengthY0
                   preview.w = store.blendTransitionW
                   preview.A = store.peakAmplitudeA
+                  preview.omegaN = store.speedOverall
+                  preview.inwardVelocity = store.inwardImpulse
+                  preview.zeta = store.outwardDamping
                   preview.post {
                       preview.centerY = preview.height * store.volumeUpRatio
                       preview.setPreviewStatic(1.0f)
