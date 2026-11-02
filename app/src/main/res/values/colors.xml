@@ -8,4 +8,5 @@
     <color name="brand_text_secondary">#AAAAAA</color>
     <color name="brand_accent_green">#34C759</color>
     <color name="brand_accent_orange">#FF9F0A</color>
+    <color name="brand_code_bg">#0D1117</color>
 </resources>
