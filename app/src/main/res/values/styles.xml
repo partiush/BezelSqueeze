@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
+    <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/brand_primary</item>
         <item name="colorOnPrimary">#FFFFFF</item>
         <item name="colorSurface">@color/brand_surface</item>
@@ -9,6 +9,7 @@
         <item name="colorOnSurfaceVariant">#CCCCCC</item>
         <item name="colorOutline">#3A3A3C</item>
         <item name="android:colorBackground">@color/brand_background</item>
+        <item name="android:windowBackground">@color/brand_background</item>
         <item name="android:statusBarColor">@color/brand_background</item>
         <item name="android:navigationBarColor">@color/brand_background</item>
     </style>
