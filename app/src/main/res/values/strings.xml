@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Bezel Squeeze</string>
-    <string name="accessibility_service_label">Bezel Squeeze Engine</string>
-    <string name="accessibility_service_desc">Draws realistic bezel squeeze feedback deformations, custom scriptable volume overlays, and handles physical button intercepts.</string>
-</resources>
