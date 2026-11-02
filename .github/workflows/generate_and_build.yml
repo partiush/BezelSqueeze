@@ -15,7 +15,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Scaffold Complete Android Project
+      - name: Scaffold Project Files
         run: |
           mkdir -p gradle/wrapper
           mkdir -p app/src/main/res/values
@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 4
-                  versionName = "4.0"
+                  versionCode = 5
+                  versionName = "5.0"
               }
 
               compileOptions {
@@ -93,7 +93,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest
+          # 5. AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -225,7 +225,7 @@ jobs:
           }
           EOF
 
-          # 9. Pixel-Perfect Bezel Deformation View (G2 Tangent Squircle + Glass Specular Rim)
+          # 9. Ultra-Accurate Optical Squircle Bezel View
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -255,7 +255,6 @@ jobs:
 
               private val corePath = Path()
               private val specularPath = Path()
-              private val shadowPath = Path()
 
               // Deep OLED pitch-black frame extension
               private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -263,14 +262,14 @@ jobs:
                   style = Paint.Style.FILL
               }
 
-              // Soft ambient glass drop-shadow
+              // Soft ambient glass shadow
               private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = 0x55000000
                   style = Paint.Style.FILL
                   maskFilter = BlurMaskFilter(16f, BlurMaskFilter.Blur.NORMAL)
               }
 
-              // Glass Refractive Lip (Specular Highlight Curve)
+              // Specular illuminated glass refraction line
               private val specularPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.STROKE
                   strokeWidth = 3.4f
@@ -285,10 +284,10 @@ jobs:
                   }
               }
 
-              // Exact spring kinetics: high stiffness with calibrated underdamped recoil
+              // Kinetic profile: ultra-stiff, responsive return spring
               private val spring = SpringAnimation(this, displacementProperty).apply {
                   spring = SpringForce().apply {
-                      dampingRatio = 0.65f
+                      dampingRatio = 0.62f
                       stiffness = 1800f
                   }
               }
@@ -296,7 +295,6 @@ jobs:
               fun onHardwareButtonDown() {
                   spring.cancel()
                   triggerHapticTick()
-                  // Immediate high-velocity physical impact
                   displacement = 1.0f
                   invalidate()
               }
@@ -332,7 +330,6 @@ jobs:
                   val w = width.toFloat()
                   val activeDepth = maxDepth * displacement
 
-                  // Smooth pill-squircle G2 continuous curve profile
                   val halfLen = bulgeLength / 2f
                   val plateauHalf = halfLen * 0.35f
                   val transitionLen = halfLen - plateauHalf
@@ -344,10 +341,16 @@ jobs:
 
                   corePath.reset()
                   specularPath.reset()
-                  shadowPath.reset()
+
+                  // Explicitly typed color hex arrays to prevent signed 32-bit overflow errors
+                  val specularColors = intArrayOf(
+                      0x00FFFFFF,
+                      0x88FFFFFF.toInt(),
+                      0x00FFFFFF
+                  )
+                  val specularPositions = floatArrayOf(0.0f, 0.5f, 1.0f)
 
                   if (isLeftEdge) {
-                      // G2 cubic ease-in with zero tangent at bezel junction
                       corePath.moveTo(0f, yStart)
                       corePath.cubicTo(
                           0f, yStart + (transitionLen * 0.45f),
@@ -362,7 +365,6 @@ jobs:
                       )
                       corePath.lineTo(0f, yStart)
 
-                      // Specular curvature highlight path
                       specularPath.moveTo(0f, yStart)
                       specularPath.cubicTo(
                           0f, yStart + (transitionLen * 0.45f),
@@ -376,17 +378,13 @@ jobs:
                           0f, yEnd
                       )
 
-                      // 1. Draw diffused ambient drop-shadow
                       canvas.drawPath(corePath, shadowPaint)
-
-                      // 2. Draw solid OLED black core
                       canvas.drawPath(corePath, corePaint)
 
-                      // 3. Draw specular illuminated glass rim with dynamic brightness
                       specularPaint.shader = LinearGradient(
                           0f, yStart, activeDepth, centerY,
-                          intArrayOf(0x00FFFFFF, 0x88FFFFFF, 0x00FFFFFF),
-                          floatArrayOf(0.0f, 0.5f, 1.0f),
+                          specularColors,
+                          specularPositions,
                           Shader.TileMode.CLAMP
                       )
                       specularPaint.alpha = (235 * displacement).toInt()
@@ -426,8 +424,8 @@ jobs:
 
                       specularPaint.shader = LinearGradient(
                           xBezel, yStart, xBezel - activeDepth, centerY,
-                          intArrayOf(0x00FFFFFF, 0x88FFFFFF, 0x00FFFFFF),
-                          floatArrayOf(0.0f, 0.5f, 1.0f),
+                          specularColors,
+                          specularPositions,
                           Shader.TileMode.CLAMP
                       )
                       specularPaint.alpha = (235 * displacement).toInt()
@@ -437,7 +435,7 @@ jobs:
           }
           EOF
 
-          # 10. Hardware Service with Immediate Accessibility Key Hook
+          # 10. Hardware Service with Instant Accessibility Interception
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
