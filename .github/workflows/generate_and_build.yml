@@ -72,8 +72,8 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 3
-                  versionName = "3.0"
+                  versionCode = 4
+                  versionName = "4.0"
               }
 
               compileOptions {
@@ -93,7 +93,7 @@ jobs:
           }
           EOF
 
-          # 5. Manifest (Boot + Foreground Persistent Service + Haptics)
+          # 5. Manifest
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -187,7 +187,6 @@ jobs:
 
           class BootCompletedReceiver : BroadcastReceiver() {
               override fun onReceive(context: Context, intent: Intent) {
-                  // Keep settings hot in flash memory
                   val store = MorphConfigStore(context)
                   val _unused = store.isLeftEdge
               }
@@ -217,7 +216,7 @@ jobs:
                   set(v) = prefs.edit().putFloat("bulge_len", v).apply()
 
               var depthPx: Float
-                  get() = prefs.getFloat("bulge_dep", 26f)
+                  get() = prefs.getFloat("bulge_dep", 24f)
                   set(v) = prefs.edit().putFloat("bulge_dep", v).apply()
 
               var isLeftEdge: Boolean
@@ -226,7 +225,7 @@ jobs:
           }
           EOF
 
-          # 9. Ultra-Accurate Squircle Pill Bezel Engine with Ambient Glass Specular Lip
+          # 9. Pixel-Perfect Bezel Deformation View (G2 Tangent Squircle + Glass Specular Rim)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -249,35 +248,36 @@ jobs:
               var isLeftEdge: Boolean = true
               var centerY: Float = 400f
               var bulgeLength: Float = 175f
-              var maxDepth: Float = 26f
+              var maxDepth: Float = 24f
 
               private var displacement: Float = 0f
               private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
 
-              private val bodyPath = Path()
-              private val rimPath = Path()
+              private val corePath = Path()
+              private val specularPath = Path()
+              private val shadowPath = Path()
 
-              // Deep Pitch Black Core (Matches OLED border & physical frame)
-              private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              // Deep OLED pitch-black frame extension
+              private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
               }
 
-              // Drop shadow into content layer
+              // Soft ambient glass drop-shadow
               private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = 0x55000000
                   style = Paint.Style.FILL
-                  maskFilter = BlurMaskFilter(14f, BlurMaskFilter.Blur.NORMAL)
+                  maskFilter = BlurMaskFilter(16f, BlurMaskFilter.Blur.NORMAL)
               }
 
-              // Specular Glass Edge Arc (Glint along curvature)
-              private val specularRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              // Glass Refractive Lip (Specular Highlight Curve)
+              private val specularPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.STROKE
-                  strokeWidth = 3.2f
+                  strokeWidth = 3.4f
                   strokeCap = Paint.Cap.ROUND
               }
 
-              private val animProp = object : FloatPropertyCompat<BezelSurfaceView>("displacement") {
+              private val displacementProperty = object : FloatPropertyCompat<BezelSurfaceView>("displacement") {
                   override fun getValue(v: BezelSurfaceView): Float = v.displacement
                   override fun setValue(v: BezelSurfaceView, value: Float) {
                       v.displacement = value
@@ -285,18 +285,18 @@ jobs:
                   }
               }
 
-              // Spring tuned to 1400f stiffness with 0.62f damping
-              private val spring = SpringAnimation(this, animProp).apply {
+              // Exact spring kinetics: high stiffness with calibrated underdamped recoil
+              private val spring = SpringAnimation(this, displacementProperty).apply {
                   spring = SpringForce().apply {
-                      dampingRatio = 0.62f
-                      stiffness = 1400f
+                      dampingRatio = 0.65f
+                      stiffness = 1800f
                   }
               }
 
               fun onHardwareButtonDown() {
                   spring.cancel()
                   triggerHapticTick()
-                  // Push inward instantly with high impulse velocity
+                  // Immediate high-velocity physical impact
                   displacement = 1.0f
                   invalidate()
               }
@@ -304,6 +304,7 @@ jobs:
               fun onHardwareButtonUp() {
                   spring.cancel()
                   spring.setStartValue(displacement)
+                  spring.setStartVelocity(-1500f)
                   spring.animateToFinalPosition(0f)
               }
 
@@ -319,7 +320,7 @@ jobs:
                           vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
                       } else {
                           @Suppress("DEPRECATION")
-                          vibrator?.vibrate(10)
+                          vibrator?.vibrate(12)
                       }
                   } catch (ignored: Exception) {}
               }
@@ -329,110 +330,114 @@ jobs:
                   if (displacement <= 0.0001f) return
 
                   val w = width.toFloat()
-                  val currentDepth = maxDepth * displacement
+                  val activeDepth = maxDepth * displacement
 
-                  // Squircle geometry: A flat-crested pill center with G2 continuous tangent lead-ins
+                  // Smooth pill-squircle G2 continuous curve profile
                   val halfLen = bulgeLength / 2f
-                  val crestHalf = halfLen * 0.38f // Flat crest matching button pill length
-                  val leadIn = halfLen - crestHalf
+                  val plateauHalf = halfLen * 0.35f
+                  val transitionLen = halfLen - plateauHalf
 
-                  val y0 = centerY - halfLen
-                  val y1 = centerY - crestHalf
-                  val y2 = centerY + crestHalf
-                  val y3 = centerY + halfLen
+                  val yStart = centerY - halfLen
+                  val yPlateauTop = centerY - plateauHalf
+                  val yPlateauBottom = centerY + plateauHalf
+                  val yEnd = centerY + halfLen
 
-                  bodyPath.reset()
-                  rimPath.reset()
+                  corePath.reset()
+                  specularPath.reset()
+                  shadowPath.reset()
 
                   if (isLeftEdge) {
-                      // Lead-in cubic blend -> flat crest -> lead-out cubic blend
-                      bodyPath.moveTo(0f, y0)
-                      bodyPath.cubicTo(
-                          currentDepth * 0.15f, y0 + (leadIn * 0.60f),
-                          currentDepth, y1 - (leadIn * 0.25f),
-                          currentDepth, y1
+                      // G2 cubic ease-in with zero tangent at bezel junction
+                      corePath.moveTo(0f, yStart)
+                      corePath.cubicTo(
+                          0f, yStart + (transitionLen * 0.45f),
+                          activeDepth, yPlateauTop - (transitionLen * 0.45f),
+                          activeDepth, yPlateauTop
                       )
-                      bodyPath.lineTo(currentDepth, y2)
-                      bodyPath.cubicTo(
-                          currentDepth, y2 + (leadIn * 0.25f),
-                          currentDepth * 0.15f, y3 - (leadIn * 0.60f),
-                          0f, y3
+                      corePath.lineTo(activeDepth, yPlateauBottom)
+                      corePath.cubicTo(
+                          activeDepth, yPlateauBottom + (transitionLen * 0.45f),
+                          0f, yEnd - (transitionLen * 0.45f),
+                          0f, yEnd
                       )
-                      bodyPath.lineTo(0f, y0)
+                      corePath.lineTo(0f, yStart)
 
-                      // Draw ambient shadow under curve
-                      canvas.drawPath(bodyPath, shadowPaint)
-                      // Draw solid OLED black core
-                      canvas.drawPath(bodyPath, bodyPaint)
+                      // Specular curvature highlight path
+                      specularPath.moveTo(0f, yStart)
+                      specularPath.cubicTo(
+                          0f, yStart + (transitionLen * 0.45f),
+                          activeDepth, yPlateauTop - (transitionLen * 0.45f),
+                          activeDepth, yPlateauTop
+                      )
+                      specularPath.lineTo(activeDepth, yPlateauBottom)
+                      specularPath.cubicTo(
+                          activeDepth, yPlateauBottom + (transitionLen * 0.45f),
+                          0f, yEnd - (transitionLen * 0.45f),
+                          0f, yEnd
+                      )
 
-                      // Specular refraction edge line
-                      specularRimPaint.shader = LinearGradient(
-                          0f, y0, currentDepth, centerY,
-                          intArrayOf(0x00FFFFFF, 0x66FFFFFF, 0x00FFFFFF),
+                      // 1. Draw diffused ambient drop-shadow
+                      canvas.drawPath(corePath, shadowPaint)
+
+                      // 2. Draw solid OLED black core
+                      canvas.drawPath(corePath, corePaint)
+
+                      // 3. Draw specular illuminated glass rim with dynamic brightness
+                      specularPaint.shader = LinearGradient(
+                          0f, yStart, activeDepth, centerY,
+                          intArrayOf(0x00FFFFFF, 0x88FFFFFF, 0x00FFFFFF),
                           floatArrayOf(0.0f, 0.5f, 1.0f),
                           Shader.TileMode.CLAMP
                       )
-                      specularRimPaint.alpha = (210 * displacement).toInt()
+                      specularPaint.alpha = (235 * displacement).toInt()
+                      canvas.drawPath(specularPath, specularPaint)
 
-                      rimPath.moveTo(0f, y0)
-                      rimPath.cubicTo(
-                          currentDepth * 0.15f, y0 + (leadIn * 0.60f),
-                          currentDepth, y1 - (leadIn * 0.25f),
-                          currentDepth, y1
-                      )
-                      rimPath.lineTo(currentDepth, y2)
-                      rimPath.cubicTo(
-                          currentDepth, y2 + (leadIn * 0.25f),
-                          currentDepth * 0.15f, y3 - (leadIn * 0.60f),
-                          0f, y3
-                      )
-                      canvas.drawPath(rimPath, specularRimPaint)
                   } else {
-                      val xRight = w
-                      bodyPath.moveTo(xRight, y0)
-                      bodyPath.cubicTo(
-                          xRight - (currentDepth * 0.15f), y0 + (leadIn * 0.60f),
-                          xRight - currentDepth, y1 - (leadIn * 0.25f),
-                          xRight - currentDepth, y1
+                      val xBezel = w
+                      corePath.moveTo(xBezel, yStart)
+                      corePath.cubicTo(
+                          xBezel, yStart + (transitionLen * 0.45f),
+                          xBezel - activeDepth, yPlateauTop - (transitionLen * 0.45f),
+                          xBezel - activeDepth, yPlateauTop
                       )
-                      bodyPath.lineTo(xRight - currentDepth, y2)
-                      bodyPath.cubicTo(
-                          xRight - currentDepth, y2 + (leadIn * 0.25f),
-                          xRight - (currentDepth * 0.15f), y3 - (leadIn * 0.60f),
-                          xRight, y3
+                      corePath.lineTo(xBezel - activeDepth, yPlateauBottom)
+                      corePath.cubicTo(
+                          xBezel - activeDepth, yPlateauBottom + (transitionLen * 0.45f),
+                          xBezel, yEnd - (transitionLen * 0.45f),
+                          xBezel, yEnd
                       )
-                      bodyPath.lineTo(xRight, y0)
+                      corePath.lineTo(xBezel, yStart)
 
-                      canvas.drawPath(bodyPath, shadowPaint)
-                      canvas.drawPath(bodyPath, bodyPaint)
+                      specularPath.moveTo(xBezel, yStart)
+                      specularPath.cubicTo(
+                          xBezel, yStart + (transitionLen * 0.45f),
+                          xBezel - activeDepth, yPlateauTop - (transitionLen * 0.45f),
+                          xBezel - activeDepth, yPlateauTop
+                      )
+                      specularPath.lineTo(xBezel - activeDepth, yPlateauBottom)
+                      specularPath.cubicTo(
+                          xBezel - activeDepth, yPlateauBottom + (transitionLen * 0.45f),
+                          xBezel, yEnd - (transitionLen * 0.45f),
+                          xBezel, yEnd
+                      )
 
-                      specularRimPaint.shader = LinearGradient(
-                          xRight, y0, xRight - currentDepth, centerY,
-                          intArrayOf(0x00FFFFFF, 0x66FFFFFF, 0x00FFFFFF),
+                      canvas.drawPath(corePath, shadowPaint)
+                      canvas.drawPath(corePath, corePaint)
+
+                      specularPaint.shader = LinearGradient(
+                          xBezel, yStart, xBezel - activeDepth, centerY,
+                          intArrayOf(0x00FFFFFF, 0x88FFFFFF, 0x00FFFFFF),
                           floatArrayOf(0.0f, 0.5f, 1.0f),
                           Shader.TileMode.CLAMP
                       )
-                      specularRimPaint.alpha = (210 * displacement).toInt()
-
-                      rimPath.moveTo(xRight, y0)
-                      rimPath.cubicTo(
-                          xRight - (currentDepth * 0.15f), y0 + (leadIn * 0.60f),
-                          xRight - currentDepth, y1 - (leadIn * 0.25f),
-                          xRight - currentDepth, y1
-                      )
-                      rimPath.lineTo(xRight - currentDepth, y2)
-                      rimPath.cubicTo(
-                          xRight - currentDepth, y2 + (leadIn * 0.25f),
-                          xRight - (currentDepth * 0.15f), y3 - (leadIn * 0.60f),
-                          xRight, y3
-                      )
-                      canvas.drawPath(rimPath, specularRimPaint)
+                      specularPaint.alpha = (235 * displacement).toInt()
+                      canvas.drawPath(specularPath, specularPaint)
                   }
               }
           }
           EOF
 
-          # 10. Hardware Service with Low Latency Key Dispatcher
+          # 10. Hardware Service with Immediate Accessibility Key Hook
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -549,7 +554,7 @@ jobs:
           }
           EOF
 
-          # 11. Customizer Activity with Live Bezel Interaction & Auto-Vanishing Setup UI
+          # 11. Live Interactive Calibration Screen
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -582,13 +587,13 @@ jobs:
                   container.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
                   val scroll = ScrollView(this).apply {
-                      setBackgroundColor(0xDD121212.toInt())
+                      setBackgroundColor(0xDD111111.toInt())
                       setPadding(36, 24, 36, 32)
                   }
                   val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
                   val title = TextView(this).apply {
-                      text = "Bezel Physical Alignment"
+                      text = "Physical Edge Alignment"
                       setTextColor(0xFFFFFFFF.toInt())
                       textSize = 18f
                       setPadding(0, 0, 0, 16)
@@ -596,12 +601,12 @@ jobs:
                   content.addView(title)
 
                   val edgeSwitch = Switch(this).apply {
-                      text = if (store.isLeftEdge) "Side: Left Edge" else "Side: Right Edge"
+                      text = if (store.isLeftEdge) "Position: Left Edge" else "Position: Right Edge"
                       setTextColor(0xFFCCCCCC.toInt())
                       isChecked = store.isLeftEdge
                       setOnCheckedChangeListener { _, checked ->
                           store.isLeftEdge = checked
-                          text = if (checked) "Side: Left Edge" else "Side: Right Edge"
+                          text = if (checked) "Position: Left Edge" else "Position: Right Edge"
                           updatePreview()
                       }
                   }
@@ -619,12 +624,12 @@ jobs:
                       preview.setPreviewStatic(1.0f)
                   })
 
-                  content.addView(buildSlider("Button Height (Length)", store.lengthPx.toInt(), 80, 380) {
+                  content.addView(buildSlider("Physical Button Height", store.lengthPx.toInt(), 80, 380) {
                       store.lengthPx = it.toFloat()
                       updatePreview()
                   })
 
-                  content.addView(buildSlider("Morph Depth (Intrusion)", store.depthPx.toInt(), 8, 65) {
+                  content.addView(buildSlider("Intrusion Depth", store.depthPx.toInt(), 8, 65) {
                       store.depthPx = it.toFloat()
                       updatePreview()
                   })
