@@ -15,7 +15,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Scaffold Project Files
+      - name: Scaffold Complete Project
         run: |
           mkdir -p gradle/wrapper
           mkdir -p app/src/main/res/values
@@ -70,10 +70,10 @@ jobs:
 
               defaultConfig {
                   applicationId = "com.edge.bezelmorph"
-                  minSdk = 26
+                  minSdk = 28
                   targetSdk = 34
-                  versionCode = 5
-                  versionName = "5.0"
+                  versionCode = 6
+                  versionName = "6.0"
               }
 
               compileOptions {
@@ -89,11 +89,10 @@ jobs:
               implementation("androidx.core:core-ktx:1.12.0")
               implementation("androidx.appcompat:appcompat:1.6.1")
               implementation("com.google.android.material:material:1.11.0")
-              implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
           }
           EOF
 
-          # 5. AndroidManifest.xml
+          # 5. Manifest with Cutout & Screen Edge Privileges
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -204,28 +203,28 @@ jobs:
               private val prefs: SharedPreferences = context.getSharedPreferences("bezel_morph_pref", Context.MODE_PRIVATE)
 
               var volumeUpRatio: Float
-                  get() = prefs.getFloat("v_up_ratio", 0.235f)
+                  get() = prefs.getFloat("v_up_ratio", 0.22f)
                   set(v) = prefs.edit().putFloat("v_up_ratio", v).apply()
 
               var volumeDownRatio: Float
-                  get() = prefs.getFloat("v_down_ratio", 0.335f)
+                  get() = prefs.getFloat("v_down_ratio", 0.32f)
                   set(v) = prefs.edit().putFloat("v_down_ratio", v).apply()
 
               var lengthPx: Float
-                  get() = prefs.getFloat("bulge_len", 175f)
+                  get() = prefs.getFloat("bulge_len", 220f)
                   set(v) = prefs.edit().putFloat("bulge_len", v).apply()
 
               var depthPx: Float
-                  get() = prefs.getFloat("bulge_dep", 24f)
+                  get() = prefs.getFloat("bulge_dep", 46f)
                   set(v) = prefs.edit().putFloat("bulge_dep", v).apply()
 
               var isLeftEdge: Boolean
-                  get() = prefs.getBoolean("is_left_side", true)
+                  get() = prefs.getBoolean("is_left_side", false) // Defaults to right side based on device
                   set(v) = prefs.edit().putBoolean("is_left_side", v).apply()
           }
           EOF
 
-          # 9. Ultra-Accurate Optical Squircle Bezel View
+          # 9. Choreographer-Driven 120Hz Squircle Deformation Engine
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -235,207 +234,219 @@ jobs:
           import android.os.VibrationEffect
           import android.os.Vibrator
           import android.util.AttributeSet
+          import android.view.Choreographer
           import android.view.View
-          import androidx.dynamicanimation.animation.FloatPropertyCompat
-          import androidx.dynamicanimation.animation.SpringAnimation
-          import androidx.dynamicanimation.animation.SpringForce
 
           class BezelSurfaceView @JvmOverloads constructor(
               context: Context,
               attrs: AttributeSet? = null
-          ) : View(context, attrs) {
+          ) : View(context, attrs), Choreographer.FrameCallback {
 
-              var isLeftEdge: Boolean = true
-              var centerY: Float = 400f
-              var bulgeLength: Float = 175f
-              var maxDepth: Float = 24f
+              var isLeftEdge: Boolean = false
+              var centerY: Float = 600f
+              var bulgeLength: Float = 220f
+              var maxDepth: Float = 46f
 
-              private var displacement: Float = 0f
+              // Physics State
+              private var position: Float = 0f
+              private var velocity: Float = 0f
+              private var target: Float = 0f
+              private var isAnimating: Boolean = false
+
+              // Calibrated Spring Constants (matches 120Hz display refresh)
+              private val stiffness: Float = 1450f
+              private val damping: Float = 58f
+
               private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+              private val choreographer = Choreographer.getInstance()
 
-              private val corePath = Path()
-              private val specularPath = Path()
+              private val path = Path()
+              private val rimPath = Path()
 
-              // Deep OLED pitch-black frame extension
-              private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
               }
 
-              // Soft ambient glass shadow
-              private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  color = 0x55000000
-                  style = Paint.Style.FILL
-                  maskFilter = BlurMaskFilter(16f, BlurMaskFilter.Blur.NORMAL)
-              }
-
-              // Specular illuminated glass refraction line
-              private val specularPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   style = Paint.Style.STROKE
-                  strokeWidth = 3.4f
+                  strokeWidth = 3.6f
                   strokeCap = Paint.Cap.ROUND
               }
 
-              private val displacementProperty = object : FloatPropertyCompat<BezelSurfaceView>("displacement") {
-                  override fun getValue(v: BezelSurfaceView): Float = v.displacement
-                  override fun setValue(v: BezelSurfaceView, value: Float) {
-                      v.displacement = value
-                      v.invalidate()
-                  }
-              }
-
-              // Kinetic profile: ultra-stiff, responsive return spring
-              private val spring = SpringAnimation(this, displacementProperty).apply {
-                  spring = SpringForce().apply {
-                      dampingRatio = 0.62f
-                      stiffness = 1800f
-                  }
-              }
-
               fun onHardwareButtonDown() {
-                  spring.cancel()
-                  triggerHapticTick()
-                  displacement = 1.0f
-                  invalidate()
+                  target = 1.0f
+                  velocity = 32f // Instantaneous initial pop velocity
+                  triggerHaptic()
+                  startLoop()
               }
 
               fun onHardwareButtonUp() {
-                  spring.cancel()
-                  spring.setStartValue(displacement)
-                  spring.setStartVelocity(-1500f)
-                  spring.animateToFinalPosition(0f)
+                  target = 0.0f
+                  startLoop()
               }
 
               fun setPreviewStatic(value: Float) {
-                  spring.cancel()
-                  displacement = value
+                  stopLoop()
+                  position = value
                   invalidate()
               }
 
-              private fun triggerHapticTick() {
+              private fun startLoop() {
+                  if (!isAnimating) {
+                      isAnimating = true
+                      choreographer.postFrameCallback(this)
+                  }
+              }
+
+              private fun stopLoop() {
+                  isAnimating = false
+                  choreographer.removeFrameCallback(this)
+              }
+
+              override fun doFrame(frameTimeNanos: Long) {
+                  if (!isAnimating) return
+
+                  // 120Hz/60Hz Euler integration step
+                  val dt = 0.016f
+                  val force = -stiffness * (position - target) - damping * velocity
+                  velocity += force * dt
+                  position += velocity * dt
+
+                  if (target == 0f && kotlin.math.abs(velocity) < 0.005f && kotlin.math.abs(position) < 0.005f) {
+                      position = 0f
+                      velocity = 0f
+                      isAnimating = false
+                      invalidate()
+                      return
+                  }
+
+                  invalidate()
+                  choreographer.postFrameCallback(this)
+              }
+
+              private fun triggerHaptic() {
                   try {
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                           vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
                       } else {
                           @Suppress("DEPRECATION")
-                          vibrator?.vibrate(12)
+                          vibrator?.vibrate(10)
                       }
                   } catch (ignored: Exception) {}
               }
 
               override fun onDraw(canvas: Canvas) {
                   super.onDraw(canvas)
-                  if (displacement <= 0.0001f) return
+                  val p = position.coerceIn(0f, 1.25f)
+                  if (p <= 0.0001f) return
 
                   val w = width.toFloat()
-                  val activeDepth = maxDepth * displacement
+                  val activeDepth = maxDepth * p
 
-                  val halfLen = bulgeLength / 2f
-                  val plateauHalf = halfLen * 0.35f
-                  val transitionLen = halfLen - plateauHalf
+                  // Exact iOS Squircle Pill profile
+                  val totalSpan = bulgeLength * (1.0f + (p * 0.15f))
+                  val halfSpan = totalSpan / 2f
+                  val plateauHalf = halfSpan * 0.40f
+                  val blendSpan = halfSpan - plateauHalf
 
-                  val yStart = centerY - halfLen
-                  val yPlateauTop = centerY - plateauHalf
-                  val yPlateauBottom = centerY + plateauHalf
-                  val yEnd = centerY + halfLen
+                  val y0 = centerY - halfSpan
+                  val y1 = centerY - plateauHalf
+                  val y2 = centerY + plateauHalf
+                  val y3 = centerY + halfSpan
 
-                  corePath.reset()
-                  specularPath.reset()
+                  path.reset()
+                  rimPath.reset()
 
-                  // Explicitly typed color hex arrays to prevent signed 32-bit overflow errors
                   val specularColors = intArrayOf(
                       0x00FFFFFF,
-                      0x88FFFFFF.toInt(),
+                      0x99FFFFFF.toInt(),
                       0x00FFFFFF
                   )
-                  val specularPositions = floatArrayOf(0.0f, 0.5f, 1.0f)
+                  val specularStops = floatArrayOf(0.0f, 0.5f, 1.0f)
 
                   if (isLeftEdge) {
-                      corePath.moveTo(0f, yStart)
-                      corePath.cubicTo(
-                          0f, yStart + (transitionLen * 0.45f),
-                          activeDepth, yPlateauTop - (transitionLen * 0.45f),
-                          activeDepth, yPlateauTop
+                      path.moveTo(0f, y0)
+                      // G2 Bezier Blend In
+                      path.cubicTo(
+                          0f, y0 + (blendSpan * 0.55f),
+                          activeDepth, y1 - (blendSpan * 0.35f),
+                          activeDepth, y1
                       )
-                      corePath.lineTo(activeDepth, yPlateauBottom)
-                      corePath.cubicTo(
-                          activeDepth, yPlateauBottom + (transitionLen * 0.45f),
-                          0f, yEnd - (transitionLen * 0.45f),
-                          0f, yEnd
+                      path.lineTo(activeDepth, y2)
+                      // G2 Bezier Blend Out
+                      path.cubicTo(
+                          activeDepth, y2 + (blendSpan * 0.35f),
+                          0f, y3 - (blendSpan * 0.55f),
+                          0f, y3
                       )
-                      corePath.lineTo(0f, yStart)
+                      path.lineTo(0f, y0)
 
-                      specularPath.moveTo(0f, yStart)
-                      specularPath.cubicTo(
-                          0f, yStart + (transitionLen * 0.45f),
-                          activeDepth, yPlateauTop - (transitionLen * 0.45f),
-                          activeDepth, yPlateauTop
+                      rimPath.moveTo(0f, y0)
+                      rimPath.cubicTo(
+                          0f, y0 + (blendSpan * 0.55f),
+                          activeDepth, y1 - (blendSpan * 0.35f),
+                          activeDepth, y1
                       )
-                      specularPath.lineTo(activeDepth, yPlateauBottom)
-                      specularPath.cubicTo(
-                          activeDepth, yPlateauBottom + (transitionLen * 0.45f),
-                          0f, yEnd - (transitionLen * 0.45f),
-                          0f, yEnd
+                      rimPath.lineTo(activeDepth, y2)
+                      rimPath.cubicTo(
+                          activeDepth, y2 + (blendSpan * 0.35f),
+                          0f, y3 - (blendSpan * 0.55f),
+                          0f, y3
                       )
 
-                      canvas.drawPath(corePath, shadowPaint)
-                      canvas.drawPath(corePath, corePaint)
+                      canvas.drawPath(path, fillPaint)
 
-                      specularPaint.shader = LinearGradient(
-                          0f, yStart, activeDepth, centerY,
-                          specularColors,
-                          specularPositions,
-                          Shader.TileMode.CLAMP
+                      rimPaint.shader = LinearGradient(
+                          0f, y0, activeDepth, centerY,
+                          specularColors, specularStops, Shader.TileMode.CLAMP
                       )
-                      specularPaint.alpha = (235 * displacement).toInt()
-                      canvas.drawPath(specularPath, specularPaint)
+                      rimPaint.alpha = (240 * p.coerceAtMost(1f)).toInt()
+                      canvas.drawPath(rimPath, rimPaint)
 
                   } else {
-                      val xBezel = w
-                      corePath.moveTo(xBezel, yStart)
-                      corePath.cubicTo(
-                          xBezel, yStart + (transitionLen * 0.45f),
-                          xBezel - activeDepth, yPlateauTop - (transitionLen * 0.45f),
-                          xBezel - activeDepth, yPlateauTop
+                      val xEdge = w
+                      path.moveTo(xEdge, y0)
+                      path.cubicTo(
+                          xEdge, y0 + (blendSpan * 0.55f),
+                          xEdge - activeDepth, y1 - (blendSpan * 0.35f),
+                          xEdge - activeDepth, y1
                       )
-                      corePath.lineTo(xBezel - activeDepth, yPlateauBottom)
-                      corePath.cubicTo(
-                          xBezel - activeDepth, yPlateauBottom + (transitionLen * 0.45f),
-                          xBezel, yEnd - (transitionLen * 0.45f),
-                          xBezel, yEnd
+                      path.lineTo(xEdge - activeDepth, y2)
+                      path.cubicTo(
+                          xEdge - activeDepth, y2 + (blendSpan * 0.35f),
+                          xEdge, y3 - (blendSpan * 0.55f),
+                          xEdge, y3
                       )
-                      corePath.lineTo(xBezel, yStart)
+                      path.lineTo(xEdge, y0)
 
-                      specularPath.moveTo(xBezel, yStart)
-                      specularPath.cubicTo(
-                          xBezel, yStart + (transitionLen * 0.45f),
-                          xBezel - activeDepth, yPlateauTop - (transitionLen * 0.45f),
-                          xBezel - activeDepth, yPlateauTop
+                      rimPath.moveTo(xEdge, y0)
+                      rimPath.cubicTo(
+                          xEdge, y0 + (blendSpan * 0.55f),
+                          xEdge - activeDepth, y1 - (blendSpan * 0.35f),
+                          xEdge - activeDepth, y1
                       )
-                      specularPath.lineTo(xBezel - activeDepth, yPlateauBottom)
-                      specularPath.cubicTo(
-                          xBezel - activeDepth, yPlateauBottom + (transitionLen * 0.45f),
-                          xBezel, yEnd - (transitionLen * 0.45f),
-                          xBezel, yEnd
+                      rimPath.lineTo(xEdge - activeDepth, y2)
+                      rimPath.cubicTo(
+                          xEdge - activeDepth, y2 + (blendSpan * 0.35f),
+                          xEdge, y3 - (blendSpan * 0.55f),
+                          xEdge, y3
                       )
 
-                      canvas.drawPath(corePath, shadowPaint)
-                      canvas.drawPath(corePath, corePaint)
+                      canvas.drawPath(path, fillPaint)
 
-                      specularPaint.shader = LinearGradient(
-                          xBezel, yStart, xBezel - activeDepth, centerY,
-                          specularColors,
-                          specularPositions,
-                          Shader.TileMode.CLAMP
+                      rimPaint.shader = LinearGradient(
+                          xEdge, y0, xEdge - activeDepth, centerY,
+                          specularColors, specularStops, Shader.TileMode.CLAMP
                       )
-                      specularPaint.alpha = (235 * displacement).toInt()
-                      canvas.drawPath(specularPath, specularPaint)
+                      rimPaint.alpha = (240 * p.coerceAtMost(1f)).toInt()
+                      canvas.drawPath(rimPath, rimPaint)
                   }
               }
           }
           EOF
 
-          # 10. Hardware Service with Instant Accessibility Interception
+          # 10. Hardware Service with Cutout Inset Bypass
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -478,7 +489,7 @@ jobs:
 
                   val notification: Notification = NotificationCompat.Builder(this, channelId)
                       .setContentTitle("Perimeter Engine Active")
-                      .setContentText("Listening to hardware switches")
+                      .setContentText("Syncing with hardware switches")
                       .setSmallIcon(android.R.drawable.ic_menu_crop)
                       .setPriority(NotificationCompat.PRIORITY_MIN)
                       .setOngoing(true)
@@ -504,6 +515,11 @@ jobs:
                           flags,
                           PixelFormat.TRANSLUCENT
                       )
+
+                      // Bypasses display notches and safe-inset padding
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                          params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                      }
 
                       overlay = BezelSurfaceView(this).apply {
                           isLeftEdge = store.isLeftEdge
@@ -552,7 +568,7 @@ jobs:
           }
           EOF
 
-          # 11. Live Interactive Calibration Screen
+          # 11. MainActivity with Live Alignment
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -585,7 +601,7 @@ jobs:
                   container.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
                   val scroll = ScrollView(this).apply {
-                      setBackgroundColor(0xDD111111.toInt())
+                      setBackgroundColor(0xEE111111.toInt())
                       setPadding(36, 24, 36, 32)
                   }
                   val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -599,12 +615,12 @@ jobs:
                   content.addView(title)
 
                   val edgeSwitch = Switch(this).apply {
-                      text = if (store.isLeftEdge) "Position: Left Edge" else "Position: Right Edge"
+                      text = if (store.isLeftEdge) "Side: Left Edge" else "Side: Right Edge"
                       setTextColor(0xFFCCCCCC.toInt())
                       isChecked = store.isLeftEdge
                       setOnCheckedChangeListener { _, checked ->
                           store.isLeftEdge = checked
-                          text = if (checked) "Position: Left Edge" else "Position: Right Edge"
+                          text = if (checked) "Side: Left Edge" else "Side: Right Edge"
                           updatePreview()
                       }
                   }
@@ -622,12 +638,12 @@ jobs:
                       preview.setPreviewStatic(1.0f)
                   })
 
-                  content.addView(buildSlider("Physical Button Height", store.lengthPx.toInt(), 80, 380) {
+                  content.addView(buildSlider("Physical Button Height", store.lengthPx.toInt(), 120, 500) {
                       store.lengthPx = it.toFloat()
                       updatePreview()
                   })
 
-                  content.addView(buildSlider("Intrusion Depth", store.depthPx.toInt(), 8, 65) {
+                  content.addView(buildSlider("Intrusion Depth", store.depthPx.toInt(), 15, 110) {
                       store.depthPx = it.toFloat()
                       updatePreview()
                   })
