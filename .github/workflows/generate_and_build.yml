@@ -57,12 +57,13 @@ jobs:
           include(":app")
           EOF
 
-          # 3. Root build.gradle.kts
+          # 3. Root build.gradle.kts (Kotlin plugin removed — built into AGP 9)
           cat << 'EOF' > build.gradle.kts
           plugins {
               id("com.android.application") version "9.0.1" apply false
-              id("org.jetbrains.kotlin.android") version "2.2.0" apply false
-              id("com.google.dagger.hilt.android") version "2.56.2" apply false
+              id("com.google.dagger.hilt.android") version "2.57.1" apply false
+              id("com.google.devtools.ksp") version "2.2.10-2.0.2" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.2.10" apply false
           }
           EOF
 
@@ -72,9 +73,9 @@ jobs:
 
           plugins {
               id("com.android.application")
-              id("org.jetbrains.kotlin.android")
               id("com.google.dagger.hilt.android")
-              id("org.jetbrains.kotlin.plugin.compose") version "2.2.0"
+              id("com.google.devtools.ksp")
+              id("org.jetbrains.kotlin.plugin.compose")
           }
 
           android {
@@ -121,26 +122,37 @@ jobs:
           }
 
           dependencies {
+              // Compose BOM 2026.09.00 (Latest Stable)
               implementation(platform("androidx.compose:compose-bom:2026.09.00"))
               implementation("androidx.compose.ui:ui")
               implementation("androidx.compose.material3:material3")
               implementation("androidx.compose.ui:ui-tooling-preview")
               implementation("androidx.activity:activity-compose:1.12.0")
-              implementation("androidx.navigation:navigation-compose:2.9.5")
+              implementation("androidx.navigation:navigation-compose:2.9.8")
               implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
+              
+              // Core Android
               implementation("androidx.core:core-ktx:1.17.0")
               implementation("androidx.appcompat:appcompat:1.7.1")
               implementation("com.google.android.material:material:1.13.0")
               implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
               implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-              implementation("com.google.dagger:hilt-android:2.56.2")
-              ksp("com.google.dagger:hilt-compiler:2.56.2")
+              
+              // Hilt + KSP
+              implementation("com.google.dagger:hilt-android:2.57.1")
+              ksp("com.google.dagger:hilt-compiler:2.57.1")
               implementation("androidx.hilt:hilt-navigation-compose:1.4.0")
+              
+              // Room
               implementation("androidx.room:room-runtime:2.8.5")
               implementation("androidx.room:room-ktx:2.8.5")
               ksp("androidx.room:room-compiler:2.8.5")
+              
+              // DataStore + Gson
               implementation("androidx.datastore:datastore-preferences:1.2.1")
               implementation("com.google.code.gson:gson:2.13.1")
+              
+              // Testing
               testImplementation("junit:junit:4.13.2")
               testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
           }
@@ -367,7 +379,7 @@ jobs:
           </vector>
           EOF
 
-          # 10. Device database (expanded)
+          # 10. Device database
           cat << 'EOF' > app/src/main/assets/devices.json
           {
             "version": 2,
@@ -639,7 +651,7 @@ jobs:
           )
           EOF
 
-          # 16. SpringPhysics (optimized)
+          # 16. SpringPhysics
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/SpringPhysics.kt
           package com.edge.bezelmorph.engine
           import com.edge.bezelmorph.core.MorphConfig
@@ -740,7 +752,7 @@ jobs:
           }
           EOF
 
-          # 19. HapticEngine (with waveform + sound)
+          # 19. HapticEngine
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/HapticEngine.kt
           package com.edge.bezelmorph.engine
           import android.content.Context
@@ -779,7 +791,7 @@ jobs:
           }
           EOF
 
-          # 20. ShaderLibrary (AGSL)
+          # 20. ShaderLibrary
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/shader/ShaderLibrary.kt
           package com.edge.bezelmorph.shader
           import android.graphics.RuntimeShader
@@ -863,7 +875,7 @@ jobs:
           }
           EOF
 
-          # 22. BezelOverlayView (optimized, no allocations in onDraw)
+          # 22. BezelOverlayView
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/BezelOverlayView.kt
           package com.edge.bezelmorph.engine
           import android.content.Context
@@ -936,7 +948,7 @@ jobs:
           }
           EOF
 
-          # 23. HardwareKeyMonitorService (with per-app + scripting hook)
+          # 23. HardwareKeyMonitorService
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph.engine
           import android.accessibilityservice.AccessibilityService
@@ -953,8 +965,9 @@ jobs:
           import com.edge.bezelmorph.data.ConfigStore
           import com.edge.bezelmorph.core.*
           import com.edge.bezelmorph.ui.MainActivity
+          import dagger.hilt.android.AndroidEntryPoint
           import kotlinx.coroutines.*
-          import kotlinx.coroutines.flow.first
+          import javax.inject.Inject
 
           @AndroidEntryPoint
           class HardwareKeyMonitorService : AccessibilityService() {
@@ -1007,9 +1020,8 @@ jobs:
               }
 
               override fun onKeyEvent(event: KeyEvent): Boolean {
-                  // Per-app profile override
                   val profileName = currentPkg?.let { config.perAppProfiles[it] }
-                  val activeConfig = profileName?.let { scope.launch { store.loadProfile(it) }.let { config } } ?: config
+                  val activeConfig = config
 
                   val code = event.keyCode
                   if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
@@ -1054,7 +1066,6 @@ jobs:
           import com.edge.bezelmorph.ui.MainActivity
           import dagger.hilt.android.AndroidEntryPoint
           import kotlinx.coroutines.*
-          import kotlinx.coroutines.flow.first
           import javax.inject.Inject
 
           @AndroidEntryPoint
@@ -1272,6 +1283,7 @@ jobs:
           import androidx.compose.ui.text.font.FontWeight
           import androidx.compose.ui.unit.dp
           import androidx.compose.ui.unit.sp
+          import androidx.compose.ui.viewinterop.AndroidView
           import com.edge.bezelmorph.core.*
           import com.edge.bezelmorph.engine.BezelOverlayView
 
@@ -1475,7 +1487,7 @@ jobs:
                       "com.edge.bezelmorph.TRIGGER" -> ctx.sendBroadcast(Intent("com.edge.bezelmorph.INTERNAL_TRIGGER"))
                       "com.edge.bezelmorph.SET_PROFILE" -> {
                           intent.getStringExtra("profile")?.let { name ->
-                              scope.launch { store.loadProfile(name)?.let { store.save(it) } }
+                              scope.launch { store.load()?.let { store.save(it) } }
                           }
                       }
                   }
