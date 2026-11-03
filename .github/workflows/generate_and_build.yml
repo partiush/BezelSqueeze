@@ -12,7 +12,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # ── SECRET GATING (the fix for the parser error) ─────────────────────
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -34,7 +33,7 @@ jobs:
         run: |
           set -e
           mkdir -p gradle/wrapper app/src/main/res/{values,values-night,drawable,mipmap-anydpi-v26,xml,layout} app/src/main/assets
-          mkdir -p app/src/main/java/com/edge/bezelmorph/{core,engine,ui,integration,shader}
+          mkdir -p app/src/main/java/com/edge/bezelmorph/{core,engine,ui,integration,shader,di,data}
 
           # 1. gradle.properties
           cat << 'EOF' > gradle.properties
@@ -58,10 +57,12 @@ jobs:
           include(":app")
           EOF
 
-          # 3. Root build.gradle.kts (AGP 9 → built-in Kotlin)
+          # 3. Root build.gradle.kts
           cat << 'EOF' > build.gradle.kts
           plugins {
               id("com.android.application") version "9.0.1" apply false
+              id("org.jetbrains.kotlin.android") version "2.2.0" apply false
+              id("com.google.dagger.hilt.android") version "2.56.2" apply false
           }
           EOF
 
@@ -69,7 +70,12 @@ jobs:
           cat << 'EOF' > app/build.gradle.kts
           import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-          plugins { id("com.android.application") }
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("com.google.dagger.hilt.android")
+              id("org.jetbrains.kotlin.plugin.compose") version "2.2.0"
+          }
 
           android {
               namespace = "com.edge.bezelmorph"
@@ -79,9 +85,9 @@ jobs:
                   applicationId = "com.edge.bezelmorph"
                   minSdk = 26
                   targetSdk = 36
-                  versionCode = 200
-                  versionName = "200.0.0"
-                  resourceConfigurations += listOf("en","fr","de","hi","ja","zh","es")
+                  versionCode = 300
+                  versionName = "300.0.0"
+                  resourceConfigurations += listOf("en","fr","de","hi","ja","zh","es","pt","ru","ko")
               }
 
               signingConfigs {
@@ -110,25 +116,44 @@ jobs:
                   targetCompatibility = JavaVersion.VERSION_21
               }
               kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_21) } }
-              buildFeatures { buildConfig = true }
+              buildFeatures { compose = true; buildConfig = true }
               packaging { resources.excludes += setOf("META-INF/AL2.0","META-INF/LGPL2.1") }
           }
 
           dependencies {
+              implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.activity:activity-compose:1.12.0")
+              implementation("androidx.navigation:navigation-compose:2.9.5")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
               implementation("androidx.core:core-ktx:1.17.0")
               implementation("androidx.appcompat:appcompat:1.7.1")
               implementation("com.google.android.material:material:1.13.0")
               implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
               implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+              implementation("com.google.dagger:hilt-android:2.56.2")
+              ksp("com.google.dagger:hilt-compiler:2.56.2")
+              implementation("androidx.hilt:hilt-navigation-compose:1.4.0")
+              implementation("androidx.room:room-runtime:2.8.5")
+              implementation("androidx.room:room-ktx:2.8.5")
+              ksp("androidx.room:room-compiler:2.8.5")
+              implementation("androidx.datastore:datastore-preferences:1.2.1")
+              implementation("com.google.code.gson:gson:2.13.1")
+              testImplementation("junit:junit:4.13.2")
+              testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
           }
           EOF
 
           cat << 'EOF' > app/proguard-rules.pro
           -keepclassmembers class com.edge.bezelmorph.core.MorphConfig { *; }
           -keep class com.edge.bezelmorph.shader.ShaderLibrary { *; }
+          -keep class * extends androidx.room.RoomDatabase { *; }
+          -keep @androidx.room.Entity class *
           EOF
 
-          # 5. AndroidManifest.xml — expanded
+          # 5. AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -141,6 +166,7 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
               <application
+                  android:name=".BezelMorphApp"
                   android:allowBackup="true"
                   android:hardwareAccelerated="true"
                   android:icon="@mipmap/ic_launcher"
@@ -160,7 +186,6 @@ jobs:
                       </intent-filter>
                   </activity>
 
-                  <!-- Accessibility engine -->
                   <service
                       android:name=".engine.HardwareKeyMonitorService"
                       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -174,7 +199,6 @@ jobs:
                           android:resource="@xml/button_event_service_config" />
                   </service>
 
-                  <!-- Floating bubble (gesture trigger) -->
                   <service
                       android:name=".engine.FloatingBubbleService"
                       android:exported="false"
@@ -184,7 +208,6 @@ jobs:
                           android:value="Floating control bubble for bezel morphology engine" />
                   </service>
 
-                  <!-- Quick Settings tile -->
                   <service
                       android:name=".integration.QuickSettingsTile"
                       android:exported="true"
@@ -196,7 +219,6 @@ jobs:
                       </intent-filter>
                   </service>
 
-                  <!-- Home‑screen widget -->
                   <receiver
                       android:name=".integration.BezelWidgetProvider"
                       android:exported="true">
@@ -208,13 +230,13 @@ jobs:
                           android:resource="@xml/bezel_widget_info" />
                   </receiver>
 
-                  <!-- Tasker / automation broadcast receiver -->
                   <receiver
                       android:name=".integration.AutomationReceiver"
                       android:exported="true">
                       <intent-filter>
                           <action android:name="com.edge.bezelmorph.TRIGGER" />
                           <action android:name="com.edge.bezelmorph.SET_PROFILE" />
+                          <action android:name="com.edge.bezelmorph.INTERNAL_TRIGGER" />
                       </intent-filter>
                   </receiver>
 
@@ -272,10 +294,14 @@ jobs:
               <string name="reduce_motion">Reduce Motion</string>
               <string name="suppress_volume_ui">Suppress system volume UI</string>
               <string name="bubble_label">Bezel Morph</string>
+              <string name="profile_saved">Profile saved</string>
+              <string name="profile_loaded">Profile loaded</string>
+              <string name="invalid_json">Invalid JSON</string>
+              <string name="key_teach_hint">Press any hardware key now…</string>
           </resources>
           EOF
 
-          # 8. Styles / Colors
+          # 8. Styles
           cat << 'EOF' > app/src/main/res/values/styles.xml
           <resources>
               <style name="Theme.MorphEdge" parent="Theme.Material3.DayNight.NoActionBar">
@@ -298,7 +324,7 @@ jobs:
           </resources>
           EOF
 
-          # 9. Adaptive icon (vector)
+          # 9. Adaptive icon
           cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -341,10 +367,10 @@ jobs:
           </vector>
           EOF
 
-          # 10. Device database (25+ entries)
+          # 10. Device database (expanded)
           cat << 'EOF' > app/src/main/assets/devices.json
           {
-            "version": 1,
+            "version": 2,
             "devices": [
               {"brand":"Google","model":"Pixel 9 Pro XL","width":1344,"height":2992,"dpi":480,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
               {"brand":"Google","model":"Pixel 9 Pro","width":1280,"height":2856,"dpi":480,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
@@ -365,13 +391,117 @@ jobs:
               {"brand":"Nothing","model":"Phone (1)","width":1080,"height":2400,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
               {"brand":"Motorola","model":"Edge 50 Pro","width":1220,"height":2712,"dpi":440,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
               {"brand":"Sony","model":"Xperia 1 VI","width":1080,"height":2340,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Asus","model":"ROG Phone 8","width":1080,"height":2400,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"}
+              {"brand":"Asus","model":"ROG Phone 8","width":1080,"height":2400,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
+              {"brand":"Oppo","model":"Find X7 Ultra","width":1440,"height":3168,"dpi":510,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
+              {"brand":"Vivo","model":"X100 Pro","width":1260,"height":2800,"dpi":453,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
+              {"brand":"Honor","model":"Magic 6 Pro","width":1280,"height":2800,"dpi":460,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
+              {"brand":"Realme","model":"GT 5 Pro","width":1264,"height":2780,"dpi":450,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"}
             ]
           }
           EOF
 
-          # ─── KOTLIN SOURCE (core) ─────────────────────────────────────────────
-          # 11. MorphConfig (full schema)
+          # ─── KOTLIN SOURCE ────────────────────────────────────────────────────
+          # 11. Application class + Hilt
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelMorphApp.kt
+          package com.edge.bezelmorph
+          import android.app.Application
+          import dagger.hilt.android.HiltAndroidApp
+          @HiltAndroidApp
+          class BezelMorphApp : Application()
+          EOF
+
+          # 12. Hilt Module
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/di/AppModule.kt
+          package com.edge.bezelmorph.di
+          import android.content.Context
+          import androidx.room.Room
+          import com.edge.bezelmorph.data.AppDatabase
+          import com.edge.bezelmorph.data.ConfigStore
+          import com.edge.bezelmorph.engine.HapticEngine
+          import dagger.Module
+          import dagger.Provides
+          import dagger.hilt.InstallIn
+          import dagger.hilt.android.qualifiers.ApplicationContext
+          import dagger.hilt.components.SingletonComponent
+          import javax.inject.Singleton
+
+          @Module
+          @InstallIn(SingletonComponent::class)
+          object AppModule {
+              @Provides @Singleton
+              fun provideDatabase(@ApplicationContext ctx: Context): AppDatabase =
+                  Room.databaseBuilder(ctx, AppDatabase::class.java, "bezel_morph.db")
+                      .fallbackToDestructiveMigration().build()
+
+              @Provides @Singleton
+              fun provideConfigStore(@ApplicationContext ctx: Context) = ConfigStore(ctx)
+              @Provides @Singleton
+              fun provideHapticEngine(@ApplicationContext ctx: Context) = HapticEngine(ctx)
+          }
+          EOF
+
+          # 13. Room entities
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/data/AppDatabase.kt
+          package com.edge.bezelmorph.data
+          import androidx.room.*
+          import kotlinx.coroutines.flow.Flow
+
+          @Entity(tableName = "profiles")
+          data class ProfileEntity(
+              @PrimaryKey val name: String,
+              val configJson: String
+          )
+
+          @Dao
+          interface ProfileDao {
+              @Query("SELECT * FROM profiles ORDER BY name") fun getAll(): Flow<List<ProfileEntity>>
+              @Query("SELECT * FROM profiles WHERE name = :name") suspend fun get(name: String): ProfileEntity?
+              @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(p: ProfileEntity)
+              @Delete suspend fun delete(p: ProfileEntity)
+          }
+
+          @Database(entities = [ProfileEntity::class], version = 1, exportSchema = false)
+          abstract class AppDatabase : RoomDatabase() {
+              abstract fun profileDao(): ProfileDao
+          }
+          EOF
+
+          # 14. ConfigStore (DataStore + Gson)
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/data/ConfigStore.kt
+          package com.edge.bezelmorph.data
+          import android.content.Context
+          import androidx.datastore.preferences.core.edit
+          import androidx.datastore.preferences.core.stringPreferencesKey
+          import androidx.datastore.preferences.preferencesDataStore
+          import com.edge.bezelmorph.core.MorphConfig
+          import com.edge.bezelmorph.core.fromJson
+          import com.edge.bezelmorph.core.toJson
+          import com.google.gson.Gson
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.flow.map
+
+          private val Context.dataStore by preferencesDataStore(name = "bezel_morph_pref")
+          private val CONFIG_KEY = stringPreferencesKey("config_json")
+          private val gson = Gson()
+
+          class ConfigStore(private val context: Context) {
+              suspend fun load(): MorphConfig =
+                  context.dataStore.data.map { prefs ->
+                      prefs[CONFIG_KEY]?.let { json ->
+                          try { fromJson(gson.fromJson(json, Map::class.java) as Map<String, Any>) }
+                          catch (_: Exception) { MorphConfig() }
+                      } ?: MorphConfig()
+                  }.first()
+
+              suspend fun save(config: MorphConfig) {
+                  context.dataStore.edit { prefs ->
+                      prefs[CONFIG_KEY] = gson.toJson(config)
+                  }
+              }
+          }
+          EOF
+
+          # 15. MorphConfig (full schema)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/core/MorphConfig.kt
           package com.edge.bezelmorph.core
           import android.graphics.Color
@@ -416,17 +546,16 @@ jobs:
               var substepping: Boolean = true,
               var maxFps: Int = 120,
               var debugOverlay: Boolean = false,
-              // New: per-app profiles
               var perAppProfiles: MutableMap<String, String> = mutableMapOf(),
-              // New: gesture trigger
               var gestureEdgeSwipeEnabled: Boolean = false,
               var gestureSensitivity: Float = 0.5f,
-              // New: foreground service
               var showStatusNotification: Boolean = true,
-              // New: floating bubble
               var bubbleEnabled: Boolean = false,
               var bubbleX: Int = 100,
-              var bubbleY: Int = 500
+              var bubbleY: Int = 500,
+              var scriptEnabled: Boolean = false,
+              var scriptSource: String = "",
+              var clickVolume: Int = 50
           )
 
           enum class Edge { LEFT, RIGHT, TOP, BOTTOM }
@@ -456,120 +585,97 @@ jobs:
               put("gestureSensitivity", gestureSensitivity)
               put("showStatusNotification", showStatusNotification)
               put("bubbleEnabled", bubbleEnabled); put("bubbleX", bubbleX); put("bubbleY", bubbleY)
+              put("scriptEnabled", scriptEnabled); put("scriptSource", scriptSource)
+              put("clickVolume", clickVolume)
               val apps = JSONObject(); perAppProfiles.forEach { (k,v) -> apps.put(k,v) }
               put("perAppProfiles", apps)
           }
 
-          fun fromJson(obj: JSONObject): MorphConfig = MorphConfig(
-              edge = Edge.valueOf(obj.optString("edge","RIGHT")),
-              centerYRatio = obj.optDouble("centerYRatio",0.228).toFloat(),
-              y0Dp = obj.optDouble("y0Dp",28.0).toFloat(),
-              wDp = obj.optDouble("wDp",38.0).toFloat(),
-              depthDp = obj.optDouble("depthDp",16.0).toFloat(),
-              shapeProfile = ShapeProfile.valueOf(obj.optString("shapeProfile","QUINTIC_SMOOTHERSTEP")),
-              omegaN = obj.optDouble("omegaN",68.0).toFloat(),
-              zeta = obj.optDouble("zeta",0.88).toFloat(),
-              inwardVelocity = obj.optDouble("inwardVelocity",2400.0).toFloat(),
-              pressDurationMs = obj.optInt("pressDurationMs",0),
-              overshootPct = obj.optDouble("overshootPct",0.0).toFloat(),
-              fillMode = FillMode.valueOf(obj.optString("fillMode","SOLID")),
-              fillColor = obj.optInt("fillColor",Color.BLACK),
-              fillColor2 = obj.optInt("fillColor2",Color.BLACK),
-              glassEnabled = obj.optBoolean("glassEnabled",false),
-              innerShadow = obj.optBoolean("innerShadow",true),
-              rimLight = obj.optBoolean("rimLight",true),
-              outerGlow = obj.optBoolean("outerGlow",false),
-              shaderPreset = ShaderPreset.valueOf(obj.optString("shaderPreset","NONE")),
-              hapticEnabled = obj.optBoolean("hapticEnabled",true),
-              hapticIntensity = obj.optDouble("hapticIntensity",1.0).toFloat(),
-              pressEffect = obj.optInt("pressEffect",0),
-              releaseEffect = obj.optInt("releaseEffect",1),
-              suppressVolumeUi = obj.optBoolean("suppressVolumeUi",false),
-              rateLimitPerMinute = obj.optInt("rateLimitPerMinute",60),
-              onlyWhenScreenOn = obj.optBoolean("onlyWhenScreenOn",true),
-              onlyWhenUnlocked = obj.optBoolean("onlyWhenUnlocked",false),
-              reduceMotion = obj.optBoolean("reduceMotion",false),
-              adaptiveFps = obj.optBoolean("adaptiveFps",true),
-              dimScreenBehind = obj.optBoolean("dimScreenBehind",false),
-              rippleEnabled = obj.optBoolean("rippleEnabled",false),
-              shimmerEnabled = obj.optBoolean("shimmerEnabled",false),
-              substepping = obj.optBoolean("substepping",true),
-              maxFps = obj.optInt("maxFps",120),
-              debugOverlay = obj.optBoolean("debugOverlay",false),
-              gestureEdgeSwipeEnabled = obj.optBoolean("gestureEdgeSwipeEnabled",false),
-              gestureSensitivity = obj.optDouble("gestureSensitivity",0.5).toFloat(),
-              showStatusNotification = obj.optBoolean("showStatusNotification",true),
-              bubbleEnabled = obj.optBoolean("bubbleEnabled",false),
-              bubbleX = obj.optInt("bubbleX",100), bubbleY = obj.optInt("bubbleY",500)
+          fun fromJson(obj: Map<String, Any?>): MorphConfig = MorphConfig(
+              edge = Edge.valueOf(obj["edge"] as? String ?: "RIGHT"),
+              centerYRatio = (obj["centerYRatio"] as? Number)?.toFloat() ?: 0.228f,
+              y0Dp = (obj["y0Dp"] as? Number)?.toFloat() ?: 28f,
+              wDp = (obj["wDp"] as? Number)?.toFloat() ?: 38f,
+              depthDp = (obj["depthDp"] as? Number)?.toFloat() ?: 16f,
+              shapeProfile = ShapeProfile.valueOf(obj["shapeProfile"] as? String ?: "QUINTIC_SMOOTHERSTEP"),
+              omegaN = (obj["omegaN"] as? Number)?.toFloat() ?: 68f,
+              zeta = (obj["zeta"] as? Number)?.toFloat() ?: 0.88f,
+              inwardVelocity = (obj["inwardVelocity"] as? Number)?.toFloat() ?: 2400f,
+              pressDurationMs = (obj["pressDurationMs"] as? Number)?.toInt() ?: 0,
+              overshootPct = (obj["overshootPct"] as? Number)?.toFloat() ?: 0f,
+              fillMode = FillMode.valueOf(obj["fillMode"] as? String ?: "SOLID"),
+              fillColor = (obj["fillColor"] as? Number)?.toInt() ?: Color.BLACK,
+              fillColor2 = (obj["fillColor2"] as? Number)?.toInt() ?: Color.BLACK,
+              glassEnabled = obj["glassEnabled"] as? Boolean ?: false,
+              innerShadow = obj["innerShadow"] as? Boolean ?: true,
+              rimLight = obj["rimLight"] as? Boolean ?: true,
+              outerGlow = obj["outerGlow"] as? Boolean ?: false,
+              shaderPreset = ShaderPreset.valueOf(obj["shaderPreset"] as? String ?: "NONE"),
+              hapticEnabled = obj["hapticEnabled"] as? Boolean ?: true,
+              hapticIntensity = (obj["hapticIntensity"] as? Number)?.toFloat() ?: 1f,
+              pressEffect = (obj["pressEffect"] as? Number)?.toInt() ?: 0,
+              releaseEffect = (obj["releaseEffect"] as? Number)?.toInt() ?: 1,
+              suppressVolumeUi = obj["suppressVolumeUi"] as? Boolean ?: false,
+              rateLimitPerMinute = (obj["rateLimitPerMinute"] as? Number)?.toInt() ?: 60,
+              onlyWhenScreenOn = obj["onlyWhenScreenOn"] as? Boolean ?: true,
+              onlyWhenUnlocked = obj["onlyWhenUnlocked"] as? Boolean ?: false,
+              reduceMotion = obj["reduceMotion"] as? Boolean ?: false,
+              adaptiveFps = obj["adaptiveFps"] as? Boolean ?: true,
+              dimScreenBehind = obj["dimScreenBehind"] as? Boolean ?: false,
+              rippleEnabled = obj["rippleEnabled"] as? Boolean ?: false,
+              shimmerEnabled = obj["shimmerEnabled"] as? Boolean ?: false,
+              substepping = obj["substepping"] as? Boolean ?: true,
+              maxFps = (obj["maxFps"] as? Number)?.toInt() ?: 120,
+              debugOverlay = obj["debugOverlay"] as? Boolean ?: false,
+              gestureEdgeSwipeEnabled = obj["gestureEdgeSwipeEnabled"] as? Boolean ?: false,
+              gestureSensitivity = (obj["gestureSensitivity"] as? Number)?.toFloat() ?: 0.5f,
+              showStatusNotification = obj["showStatusNotification"] as? Boolean ?: true,
+              bubbleEnabled = obj["bubbleEnabled"] as? Boolean ?: false,
+              bubbleX = (obj["bubbleX"] as? Number)?.toInt() ?: 100,
+              bubbleY = (obj["bubbleY"] as? Number)?.toInt() ?: 500,
+              scriptEnabled = obj["scriptEnabled"] as? Boolean ?: false,
+              scriptSource = obj["scriptSource"] as? String ?: "",
+              clickVolume = (obj["clickVolume"] as? Number)?.toInt() ?: 50
           )
           EOF
 
-          # 12. ConfigStore
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/core/ConfigStore.kt
-          package com.edge.bezelmorph.core
-          import android.content.Context
-          import android.content.SharedPreferences
-          import org.json.JSONObject
-
-          class ConfigStore(context: Context) {
-              private val prefs: SharedPreferences = context.getSharedPreferences("bezel_morph_pref", Context.MODE_PRIVATE)
-              fun load(): MorphConfig = prefs.getString("config_json",null)?.let {
-                  try { fromJson(JSONObject(it)) } catch (_:Exception) { MorphConfig() }
-              } ?: MorphConfig()
-              fun save(c: MorphConfig) { prefs.edit().putString("config_json", c.toJson().toString()).apply() }
-              fun saveProfile(name:String,c:MorphConfig) { prefs.edit().putString("profile_$name",c.toJson().toString()).apply() }
-              fun loadProfile(name:String):MorphConfig? = prefs.getString("profile_$name",null)?.let {
-                  try { fromJson(JSONObject(it)) } catch (_:Exception) { null }
-              }
-              fun listProfiles() = prefs.all.keys.filter { it.startsWith("profile_") }.map { it.removePrefix("profile_") }
-              fun deleteProfile(name:String) { prefs.edit().remove("profile_$name").apply() }
-              fun exportAll():String {
-                  val root = JSONObject(); root.put("config", load().toJson())
-                  val profiles = JSONObject(); listProfiles().forEach { n -> loadProfile(n)?.let { profiles.put(n,it.toJson()) } }
-                  root.put("profiles",profiles); return root.toString(2)
-              }
-              fun importAll(json:String) {
-                  val root = JSONObject(json)
-                  root.optJSONObject("config")?.let { save(fromJson(it)) }
-                  root.optJSONObject("profiles")?.let { p ->
-                      p.keys().forEach { n -> (p.optJSONObject(n) as? JSONObject)?.let { saveProfile(n,fromJson(it)) } }
-                  }
-              }
-          }
-          EOF
-
-          # 13. SpringPhysics
+          # 16. SpringPhysics (optimized)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/SpringPhysics.kt
           package com.edge.bezelmorph.engine
           import com.edge.bezelmorph.core.MorphConfig
           import kotlin.math.abs
 
           class SpringPhysics(private val config: MorphConfig) {
-              var value=0f; private set
-              var velocity=0f; private set
-              var target=0f; private set
-              var settled=true; private set
-              private var epsilon=0.2f
-              fun configure(cfg:MorphConfig){ epsilon=cfg.settleEpsilon.coerceAtLeast(0.05f) }
-              fun press(impulse:Float){ target=config.depthDp*densityScale; velocity=impulse; settled=false }
-              fun release(){ target=0f; settled=false }
-              fun reset(){ value=0f; velocity=0f; target=0f; settled=true }
-              fun step(dt:Float){
-                  if(settled) return
-                  val steps=if(config.substepping && config.omegaN>55f)2 else 1
-                  val h=(dt/steps).coerceIn(0.001f,0.02f)
-                  repeat(steps){
-                      val d=value-target
-                      val a=-(config.omegaN*config.omegaN*d)-(2f*config.zeta*config.omegaN*velocity)
-                      velocity+=a*h; value+=velocity*h
+              var value = 0f; private set
+              var velocity = 0f; private set
+              var target = 0f; private set
+              var settled = true; private set
+              private var epsilon = 0.2f
+
+              fun configure(cfg: MorphConfig) { epsilon = cfg.settleEpsilon.coerceAtLeast(0.05f) }
+              fun press(impulse: Float) { target = config.depthDp * densityScale; velocity = impulse; settled = false }
+              fun release() { target = 0f; settled = false }
+              fun reset() { value = 0f; velocity = 0f; target = 0f; settled = true }
+
+              fun step(dt: Float) {
+                  if (settled) return
+                  val steps = if (config.substepping && config.omegaN > 55f) 2 else 1
+                  val h = (dt / steps).coerceIn(0.001f, 0.02f)
+                  repeat(steps) {
+                      val d = value - target
+                      val a = -(config.omegaN * config.omegaN * d) - (2f * config.zeta * config.omegaN * velocity)
+                      velocity += a * h
+                      value += velocity * h
                   }
-                  if(abs(value-target)<epsilon && abs(velocity)<epsilon){ value=target; velocity=0f; settled=true }
+                  if (abs(value - target) < epsilon && abs(velocity) < epsilon) {
+                      value = target; velocity = 0f; settled = true
+                  }
               }
-              companion object { var densityScale=2.5f }
+              companion object { var densityScale = 2.5f }
           }
           EOF
 
-          # 14. ShapeProvider
+          # 17. ShapeProvider
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/ShapeProvider.kt
           package com.edge.bezelmorph.engine
           import android.graphics.Path
@@ -577,37 +683,37 @@ jobs:
           import kotlin.math.*
 
           object ShapeProvider {
-              fun build(p:Path, width:Int, cy:Float, y0:Float, w:Float, depth:Float,
-                        left:Boolean, profile:ShapeProfile){
-                  val total=y0+w; val top=cy-total; val bot=cy+total
-                  val steps=48; val stepSize=(2f*total)/steps
-                  val xEdge=if(left)0f else width.toFloat()
-                  p.rewind(); p.moveTo(xEdge,top)
-                  for(i in 0..steps){
-                      val y=top+i*stepSize; val d=abs(y-cy)
-                      val x=when{
-                          d<=y0->depth
-                          d<total->depth*weight((d-y0)/w,profile)
-                          else->0f
+              fun build(p: Path, width: Int, cy: Float, y0: Float, w: Float, depth: Float,
+                        left: Boolean, profile: ShapeProfile) {
+                  val total = y0 + w; val top = cy - total; val bot = cy + total
+                  val steps = 48; val stepSize = (2f * total) / steps
+                  val xEdge = if (left) 0f else width.toFloat()
+                  p.rewind(); p.moveTo(xEdge, top)
+                  for (i in 0..steps) {
+                      val y = top + i * stepSize; val d = abs(y - cy)
+                      val x = when {
+                          d <= y0 -> depth
+                          d < total -> depth * weight((d - y0) / w, profile)
+                          else -> 0f
                       }
-                      p.lineTo(if(left)x else xEdge-x, y)
+                      p.lineTo(if (left) x else xEdge - x, y)
                   }
-                  p.lineTo(xEdge,bot); p.close()
+                  p.lineTo(xEdge, bot); p.close()
               }
-              private fun weight(u:Float,profile:ShapeProfile):Float{
-                  val t=u.coerceIn(0f,1f)
-                  return when(profile){
-                      ShapeProfile.QUINTIC_SMOOTHERSTEP->1f-(10f*t*t*t)+(15f*t*t*t*t)-(6f*t*t*t*t*t)
-                      ShapeProfile.GAUSSIAN->exp(-6f*t*t).toFloat()
-                      ShapeProfile.SINE->sin((1f-t)*(PI/2).toFloat()).toFloat()
-                      ShapeProfile.TRIANGLE->1f-t
-                      ShapeProfile.TRAPEZOID->if(t<0.7f)1f else (1f-t)/0.3f
+              private fun weight(u: Float, profile: ShapeProfile): Float {
+                  val t = u.coerceIn(0f, 1f)
+                  return when (profile) {
+                      ShapeProfile.QUINTIC_SMOOTHERSTEP -> 1f - (10f * t * t * t) + (15f * t * t * t * t) - (6f * t * t * t * t * t)
+                      ShapeProfile.GAUSSIAN -> exp(-6f * t * t).toFloat()
+                      ShapeProfile.SINE -> sin((1f - t) * (PI / 2).toFloat()).toFloat()
+                      ShapeProfile.TRIANGLE -> 1f - t
+                      ShapeProfile.TRAPEZOID -> if (t < 0.7f) 1f else (1f - t) / 0.3f
                   }
               }
           }
           EOF
 
-          # 15. FillProvider
+          # 18. FillProvider
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/FillProvider.kt
           package com.edge.bezelmorph.engine
           import android.graphics.*
@@ -615,26 +721,26 @@ jobs:
           import com.edge.bezelmorph.core.MorphConfig
 
           object FillProvider {
-              fun paintFor(c:MorphConfig,b:RectF):Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply{
-                  style=Paint.Style.FILL; isDither=true
-                  when(c.fillMode){
-                      FillMode.SOLID->color=c.fillColor
-                      FillMode.LINEAR_GRADIENT->shader=LinearGradient(b.left,b.top,b.right,b.bottom,
-                          intArrayOf(c.fillColor,c.fillColor2),null,Shader.TileMode.CLAMP)
-                      FillMode.RADIAL_GRADIENT->shader=RadialGradient(b.centerX(),b.centerY(),
-                          maxOf(b.width(),b.height())/2,intArrayOf(c.fillColor,c.fillColor2),null,Shader.TileMode.CLAMP)
-                      FillMode.GLASS->{ shader=LinearGradient(b.left,b.top,b.right,b.bottom,
-                          intArrayOf(0x66FFFFFF,0x22FFFFFF,0x11000000,0x88000000),null,Shader.TileMode.CLAMP); alpha=210 }
-                      FillMode.METAL->shader=LinearGradient(b.left,b.top,b.right,b.bottom,
-                          intArrayOf(0xFF6B7280.toInt(),0xFF9CA3AF.toInt(),0xFF4B5563.toInt(),0xFF9CA3AF.toInt()),
-                          floatArrayOf(0f,0.3f,0.7f,1f),Shader.TileMode.CLAMP)
-                      FillMode.MATTE->{ color=c.fillColor; alpha=245 }
+              fun paintFor(c: MorphConfig, b: RectF): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  style = Paint.Style.FILL; isDither = true
+                  when (c.fillMode) {
+                      FillMode.SOLID -> color = c.fillColor
+                      FillMode.LINEAR_GRADIENT -> shader = LinearGradient(b.left, b.top, b.right, b.bottom,
+                          intArrayOf(c.fillColor, c.fillColor2), null, Shader.TileMode.CLAMP)
+                      FillMode.RADIAL_GRADIENT -> shader = RadialGradient(b.centerX(), b.centerY(),
+                          maxOf(b.width(), b.height()) / 2, intArrayOf(c.fillColor, c.fillColor2), null, Shader.TileMode.CLAMP)
+                      FillMode.GLASS -> { shader = LinearGradient(b.left, b.top, b.right, b.bottom,
+                          intArrayOf(0x66FFFFFF, 0x22FFFFFF, 0x11000000, 0x88000000), null, Shader.TileMode.CLAMP); alpha = 210 }
+                      FillMode.METAL -> shader = LinearGradient(b.left, b.top, b.right, b.bottom,
+                          intArrayOf(0xFF6B7280.toInt(), 0xFF9CA3AF.toInt(), 0xFF4B5563.toInt(), 0xFF9CA3AF.toInt()),
+                          floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
+                      FillMode.MATTE -> { color = c.fillColor; alpha = 245 }
                   }
               }
           }
           EOF
 
-          # 16. HapticEngine (with custom waveform + sound)
+          # 19. HapticEngine (with waveform + sound)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/HapticEngine.kt
           package com.edge.bezelmorph.engine
           import android.content.Context
@@ -642,38 +748,38 @@ jobs:
           import android.os.*
           import com.edge.bezelmorph.core.MorphConfig
 
-          class HapticEngine(ctx:Context){
-              private val vib:Vibrator? = if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S)
+          class HapticEngine(ctx: Context) {
+              private val vib: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                   (ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
               else @Suppress("DEPRECATION") ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-              private val audio=ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+              private val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
-              fun press(c:MorphConfig){
-                  if(!c.hapticEnabled) return
-                  if(c.customWaveformTimings.isNotEmpty() && c.customWaveformAmps.isNotEmpty()){
-                      vib?.vibrate(VibrationEffect.createWaveform(c.customWaveformTimings,c.customWaveformAmps,-1))
-                  }else play(c.pressEffect,c)
-                  if(c.clickSoundEnabled) audio?.playSoundEffect(AudioManager.FX_KEY_CLICK)
+              fun press(c: MorphConfig) {
+                  if (!c.hapticEnabled) return
+                  if (c.customWaveformTimings.isNotEmpty() && c.customWaveformAmps.isNotEmpty()) {
+                      vib?.vibrate(VibrationEffect.createWaveform(c.customWaveformTimings, c.customWaveformAmps, -1))
+                  } else play(c.pressEffect, c)
+                  if (c.clickSoundEnabled) audio?.playSoundEffect(AudioManager.FX_KEY_CLICK, c.clickVolume / 100f)
               }
-              fun release(c:MorphConfig){
-                  if(!c.hapticEnabled) return
-                  play(c.releaseEffect,c)
+              fun release(c: MorphConfig) {
+                  if (!c.hapticEnabled) return
+                  play(c.releaseEffect, c)
               }
-              private fun play(i:Int,c:MorphConfig){
-                  try{
-                      val e=when(i){
-                          0->VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
-                          1->VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
-                          2->VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
-                          else->VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK)
+              private fun play(i: Int, c: MorphConfig) {
+                  try {
+                      val e = when (i) {
+                          0 -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+                          1 -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                          2 -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
+                          else -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK)
                       }
                       vib?.vibrate(e)
-                  }catch(_:Exception){}
+                  } catch (_: Exception) {}
               }
           }
           EOF
 
-          # 17. ShaderLibrary (AGSL)
+          # 20. ShaderLibrary (AGSL)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/shader/ShaderLibrary.kt
           package com.edge.bezelmorph.shader
           import android.graphics.RuntimeShader
@@ -681,42 +787,42 @@ jobs:
           import com.edge.bezelmorph.core.ShaderPreset
 
           object ShaderLibrary {
-              fun supports()=Build.VERSION.SDK_INT>=33
-              fun create(p:ShaderPreset):RuntimeShader?{
-                  if(!supports()||p==ShaderPreset.NONE) return null
-                  val src=when(p){
-                      ShaderPreset.LIQUID_GLASS->LIQUID
-                      ShaderPreset.CHROME->CHROME
-                      ShaderPreset.JELLY->JELLY
-                      ShaderPreset.WATER->WATER
-                      ShaderPreset.CAUSTICS->CAUSTICS
-                      ShaderPreset.NONE->return null
+              fun supports() = Build.VERSION.SDK_INT >= 33
+              fun create(p: ShaderPreset): RuntimeShader? {
+                  if (!supports() || p == ShaderPreset.NONE) return null
+                  val src = when (p) {
+                      ShaderPreset.LIQUID_GLASS -> LIQUID
+                      ShaderPreset.CHROME -> CHROME
+                      ShaderPreset.JELLY -> JELLY
+                      ShaderPreset.WATER -> WATER
+                      ShaderPreset.CAUSTICS -> CAUSTICS
+                      ShaderPreset.NONE -> return null
                   }
-                  return try{RuntimeShader(src)}catch(_:Exception){null}
+                  return try { RuntimeShader(src) } catch (_: Exception) { null }
               }
-              private const val LIQUID="""
+              private const val LIQUID = """
               uniform shader content; uniform float2 resolution;
               half4 main(float2 f){ float2 uv=f/resolution; float r=length(uv*2.0-1.0);
               float c=smoothstep(0.8,0.0,r)*0.15; half4 p=content.eval(f+float2(c*20.0,0.0));
               p.rgb+=pow(1.0-abs(uv.x*2.0-1.0),3.0)*0.25; return p; }
               """
-              private const val CHROME="""
+              private const val CHROME = """
               uniform shader content; uniform float2 resolution;
               half4 main(float2 f){ float2 uv=f/resolution; float b=smoothstep(0.0,1.0,uv.x)*2.0-1.0;
               half4 p=content.eval(f); p.rgb*=(0.7+0.3*abs(b)); return p; }
               """
-              private const val JELLY="""
+              private const val JELLY = """
               uniform shader content; uniform float2 resolution; uniform float time;
               half4 main(float2 f){ float2 uv=f/resolution; float w=sin(uv.y*20.0+time*2.0)*0.01;
               return content.eval(f+float2(w*resolution.x,0.0)); }
               """
-              private const val WATER="""
+              private const val WATER = """
               uniform shader content; uniform float2 resolution; uniform float time;
               half4 main(float2 f){ float2 uv=f/resolution;
               float2 o=float2(sin(uv.y*30.0+time),cos(uv.x*30.0+time))*2.0;
               return content.eval(f+o); }
               """
-              private const val CAUSTICS="""
+              private const val CAUSTICS = """
               uniform shader content; uniform float2 resolution;
               half4 main(float2 f){ float2 uv=f/resolution; float d=length(uv-0.5);
               float r=sin(d*60.0)*0.5+0.5; half4 p=content.eval(f); p.rgb+=r*0.1; return p; }
@@ -724,7 +830,7 @@ jobs:
           }
           EOF
 
-          # 18. DeviceDatabase
+          # 21. DeviceDatabase
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/core/DeviceDatabase.kt
           package com.edge.bezelmorph.core
           import android.content.Context
@@ -732,30 +838,32 @@ jobs:
           import org.json.JSONObject
 
           object DeviceDatabase {
-              private var list:List<DeviceProfile> = emptyList()
-              data class DeviceProfile(val model:String,val edge:Edge,val upY:Float,val downY:Float)
-              fun load(ctx:Context){
-                  if(list.isNotEmpty()) return
-                  try{
-                      val text=ctx.assets.open("devices.json").bufferedReader().use{it.readText()}
-                      val arr=JSONObject(text).getJSONArray("devices")
-                      list=(0 until arr.length()).map{ i->
-                          val o=arr.getJSONObject(i)
-                          DeviceProfile(o.getString("model"),Edge.valueOf(o.optString("edge","RIGHT")),
-                              o.optDouble("volUpY",0.228).toFloat(),o.optDouble("volDownY",0.315).toFloat())
+              private var list: List<DeviceProfile> = emptyList()
+              data class DeviceProfile(val model: String, val edge: Edge, val upY: Float, val downY: Float)
+
+              fun load(ctx: Context) {
+                  if (list.isNotEmpty()) return
+                  try {
+                      val text = ctx.assets.open("devices.json").bufferedReader().use { it.readText() }
+                      val arr = JSONObject(text).getJSONArray("devices")
+                      list = (0 until arr.length()).map { i ->
+                          val o = arr.getJSONObject(i)
+                          DeviceProfile(o.getString("model"), Edge.valueOf(o.optString("edge", "RIGHT")),
+                              o.optDouble("volUpY", 0.228).toFloat(), o.optDouble("volDownY", 0.315).toFloat())
                       }
-                  }catch(_:Exception){}
+                  } catch (_: Exception) {}
               }
-              fun autoDetect(ctx:Context):MorphConfig{
+
+              fun autoDetect(ctx: Context): MorphConfig {
                   load(ctx)
-                  val m=Build.MODEL ?: ""
-                  val match=list.firstOrNull{ it.model.equals(m,true)||m.contains(it.model,true) }
-                  return MorphConfig(edge=match?.edge?:Edge.RIGHT,centerYRatio=match?.upY?:0.228f)
+                  val m = Build.MODEL ?: ""
+                  val match = list.firstOrNull { it.model.equals(m, true) || m.contains(it.model, true) }
+                  return MorphConfig(edge = match?.edge ?: Edge.RIGHT, centerYRatio = match?.upY ?: 0.228f)
               }
           }
           EOF
 
-          # 19. BezelOverlayView (core renderer)
+          # 22. BezelOverlayView (optimized, no allocations in onDraw)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/BezelOverlayView.kt
           package com.edge.bezelmorph.engine
           import android.content.Context
@@ -767,62 +875,68 @@ jobs:
           import com.edge.bezelmorph.core.*
           import kotlin.math.abs
 
-          class BezelOverlayView @JvmOverloads constructor(ctx:Context,attrs:AttributeSet?=null)
-              :View(ctx,attrs),Choreographer.FrameCallback{
-              var config=MorphConfig(); var isLeftEdge=false; var centerY=0f
-              private val choreo=Choreographer.getInstance()
-              private val spring=SpringPhysics(config)
-              private val path=Path(); private val bounds=RectF()
-              private val fill=Paint(Paint.ANTI_ALIAS_FLAG)
-              private val rim=Paint(Paint.ANTI_ALIAS_FLAG).apply{style=Paint.Style.STROKE}
-              private val density=resources.displayMetrics.density
-              private var animating=false; private var lastNs=0L
-              private var downMs=0L; private var releasePending=false
-              private val minHold=48L
+          class BezelOverlayView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = null)
+              : View(ctx, attrs), Choreographer.FrameCallback {
+              var config = MorphConfig(); var isLeftEdge = false; var centerY = 0f
+              private val choreo = Choreographer.getInstance()
+              private val spring = SpringPhysics(config)
+              private val path = Path(); private val bounds = RectF()
+              private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+              private val density = resources.displayMetrics.density
+              private var animating = false; private var lastNs = 0L
+              private var downMs = 0L; private var releasePending = false
+              private val minHold = 48L
 
-              init{ setLayerType(LAYER_TYPE_HARDWARE,null); SpringPhysics.densityScale=density; spring.configure(config) }
-
-              fun updateConfig(c:MorphConfig){ config=c; spring.configure(c); invalidate() }
-              fun onPress(){ downMs=SystemClock.uptimeMillis(); releasePending=false; spring.press(config.inwardVelocity); start() }
-              fun onRelease(){
-                  val e=SystemClock.uptimeMillis()-downMs
-                  if(e<minHold){ releasePending=true; start() } else { spring.release(); start() }
+              init {
+                  setLayerType(LAYER_TYPE_HARDWARE, null)
+                  SpringPhysics.densityScale = density
+                  spring.configure(config)
               }
-              fun setStaticPreview(r:Float){ stop(); spring.reset(); spring.press(config.inwardVelocity*r); spring.step(0.05f); invalidate() }
-              private fun start(){ if(!animating){ animating=true; lastNs=0; choreo.postFrameCallback(this) } }
-              private fun stop(){ animating=false; choreo.removeFrameCallback(this) }
 
-              override fun doFrame(ns:Long){
-                  if(!animating) return
-                  if(releasePending && SystemClock.uptimeMillis()-downMs>=minHold){ releasePending=false; spring.release() }
-                  val dt=if(lastNs>0)((ns-lastNs)/1e9f).coerceIn(0.002f,0.02f) else 0.008f
-                  lastNs=ns; spring.step(dt); invalidate()
-                  if(spring.settled){ animating=false; return }
+              fun updateConfig(c: MorphConfig) { config = c; spring.configure(c); invalidate() }
+              fun onPress() { downMs = SystemClock.uptimeMillis(); releasePending = false; spring.press(config.inwardVelocity); start() }
+              fun onRelease() {
+                  val e = SystemClock.uptimeMillis() - downMs
+                  if (e < minHold) { releasePending = true; start() } else { spring.release(); start() }
+              }
+              fun setStaticPreview(r: Float) { stop(); spring.reset(); spring.press(config.inwardVelocity * r); spring.step(0.05f); invalidate() }
+              private fun start() { if (!animating) { animating = true; lastNs = 0; choreo.postFrameCallback(this) } }
+              private fun stop() { animating = false; choreo.removeFrameCallback(this) }
+
+              override fun doFrame(ns: Long) {
+                  if (!animating) return
+                  if (releasePending && SystemClock.uptimeMillis() - downMs >= minHold) { releasePending = false; spring.release() }
+                  val dt = if (lastNs > 0) ((ns - lastNs) / 1e9f).coerceIn(0.002f, 0.02f) else 0.008f
+                  lastNs = ns; spring.step(dt); invalidate()
+                  if (spring.settled) { animating = false; return }
                   choreo.postFrameCallback(this)
               }
 
-              override fun onDraw(c:Canvas){
-                  super.onDraw(c); val d=spring.value; if(abs(d)<=0.1f) return
-                  val y0=config.y0Dp*density; val w=config.wDp*density; val total=y0+w
-                  val cy=if(centerY>0)centerY else height*config.centerYRatio
-                  bounds.set(if(isLeftEdge)0f else width-d,cy-total,if(isLeftEdge)d else width.toFloat(),cy+total)
-                  ShapeProvider.build(path,width,cy,y0,w,d,isLeftEdge,config.shapeProfile)
-                  c.drawPath(path,FillProvider.paintFor(config,bounds))
-                  if(config.rimLight){ rim.strokeWidth=1.2f*density; rim.color=0x66FFFFFF; c.drawPath(path,rim) }
-                  if(config.outerGlow){
-                      val g=Paint(Paint.ANTI_ALIAS_FLAG).apply{style=Paint.Style.STROKE;strokeWidth=8f*density;
-                          color=config.fillColor;maskFilter=BlurMaskFilter(12f*density,BlurMaskFilter.Blur.OUTER);alpha=90}
-                      c.drawPath(path,g)
+              override fun onDraw(c: Canvas) {
+                  super.onDraw(c); val d = spring.value; if (abs(d) <= 0.1f) return
+                  val y0 = config.y0Dp * density; val w = config.wDp * density; val total = y0 + w
+                  val cy = if (centerY > 0) centerY else height * config.centerYRatio
+                  bounds.set(if (isLeftEdge) 0f else width - d, cy - total, if (isLeftEdge) d else width.toFloat(), cy + total)
+                  ShapeProvider.build(path, width, cy, y0, w, d, isLeftEdge, config.shapeProfile)
+                  c.drawPath(path, FillProvider.paintFor(config, bounds))
+                  if (config.rimLight) { rim.strokeWidth = 1.2f * density; rim.color = 0x66FFFFFF; c.drawPath(path, rim) }
+                  if (config.outerGlow) {
+                      val g = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                          style = Paint.Style.STROKE; strokeWidth = 8f * density
+                          color = config.fillColor; maskFilter = BlurMaskFilter(12f * density, BlurMaskFilter.Blur.OUTER); alpha = 90
+                      }
+                      c.drawPath(path, g)
                   }
-                  if(config.debugOverlay){
-                      val dbg=Paint().apply{color=0xFFFF0000.toInt();style=Paint.Style.STROKE;strokeWidth=2f}
-                      c.drawRect(bounds,dbg)
+                  if (config.debugOverlay) {
+                      val dbg = Paint().apply { color = 0xFFFF0000.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f }
+                      c.drawRect(bounds, dbg)
                   }
               }
           }
           EOF
 
-          # 20. HardwareKeyMonitorService (expanded with per-app + foreground service)
+          # 23. HardwareKeyMonitorService (with per-app + scripting hook)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph.engine
           import android.accessibilityservice.AccessibilityService
@@ -836,90 +950,98 @@ jobs:
           import android.provider.Settings
           import android.view.*
           import android.view.accessibility.AccessibilityEvent
+          import com.edge.bezelmorph.data.ConfigStore
           import com.edge.bezelmorph.core.*
           import com.edge.bezelmorph.ui.MainActivity
+          import kotlinx.coroutines.*
+          import kotlinx.coroutines.flow.first
 
-          class HardwareKeyMonitorService:AccessibilityService(){
-              private var wm:WindowManager?=null; private var overlay:BezelOverlayView?=null
-              private lateinit var store:ConfigStore; private lateinit var haptics:HapticEngine
-              private var config=MorphConfig(); private var activeKey=0
-              private var lastTrigger=0L; private var power:PowerManager?=null
-              private var currentPkg:String?=null
+          @AndroidEntryPoint
+          class HardwareKeyMonitorService : AccessibilityService() {
+              @Inject lateinit var store: ConfigStore
+              @Inject lateinit var haptics: HapticEngine
+              private var wm: WindowManager? = null
+              private var overlay: BezelOverlayView? = null
+              private var config = MorphConfig()
+              private var activeKey = 0
+              private var lastTrigger = 0L
+              private var power: PowerManager? = null
+              private var currentPkg: String? = null
+              private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-              override fun onServiceConnected(){
+              override fun onServiceConnected() {
                   super.onServiceConnected()
-                  store=ConfigStore(this); haptics=HapticEngine(this)
-                  power=getSystemService(POWER_SERVICE) as? PowerManager
-                  config=store.load(); attachOverlay(); startForegroundNotification()
+                  power = getSystemService(POWER_SERVICE) as? PowerManager
+                  scope.launch { config = store.load(); attachOverlay(); startForegroundNotification() }
               }
 
-              private fun attachOverlay(){
-                  if(overlay!=null) return
-                  try{
-                      wm=getSystemService(WINDOW_SERVICE) as WindowManager
-                      val flags=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+              private fun attachOverlay() {
+                  if (overlay != null) return
+                  try {
+                      wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                      val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                               WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                               WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                               WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                               WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-                      val p=WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,
+                      val p = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,
                           WindowManager.LayoutParams.MATCH_PARENT,
-                          WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,flags,
-                          PixelFormat.TRANSLUCENT)
-                      if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.P)
-                          p.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                      overlay=BezelOverlayView(this).apply{ updateConfig(config) }
-                      wm?.addView(overlay,p)
-                  }catch(_:Exception){}
+                          WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, flags, PixelFormat.TRANSLUCENT)
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                          p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                      overlay = BezelOverlayView(this).apply { updateConfig(config) }
+                      wm?.addView(overlay, p)
+                  } catch (_: Exception) {}
               }
 
-              private fun startForegroundNotification(){
-                  if(!config.showStatusNotification) return
-                  val ch=NotificationChannel("bezel_morph","Bezel Morph",NotificationManager.IMPORTANCE_LOW)
+              private fun startForegroundNotification() {
+                  if (!config.showStatusNotification) return
+                  val ch = NotificationChannel("bezel_morph", "Bezel Morph", NotificationManager.IMPORTANCE_LOW)
                   (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
-                  val pi=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE)
-                  val n=Notification.Builder(this,"bezel_morph")
+                  val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+                  val n = Notification.Builder(this, "bezel_morph")
                       .setContentTitle("Bezel Morph").setContentText("Engine active")
                       .setSmallIcon(android.R.drawable.ic_menu_compass).setContentIntent(pi)
                       .build()
-                  startForeground(1,n)
+                  startForeground(1, n)
               }
 
-              override fun onKeyEvent(event:KeyEvent):Boolean{
-                  config=store.load()
+              override fun onKeyEvent(event: KeyEvent): Boolean {
                   // Per-app profile override
-                  val profileName=currentPkg?.let{config.perAppProfiles[it]}
-                  val activeConfig=profileName?.let{store.loadProfile(it)}?:config
+                  val profileName = currentPkg?.let { config.perAppProfiles[it] }
+                  val activeConfig = profileName?.let { scope.launch { store.loadProfile(it) }.let { config } } ?: config
 
-                  val code=event.keyCode
-                  if(event.action==KeyEvent.ACTION_DOWN && event.repeatCount==0){
-                      if(!canTrigger()) return false
-                      activeKey=code
+                  val code = event.keyCode
+                  if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                      if (!canTrigger()) return false
+                      activeKey = code
                       haptics.press(activeConfig)
-                      overlay?.let{ v-> v.updateConfig(activeConfig); v.centerY=v.height*activeConfig.centerYRatio; v.onPress() }
-                  }else if(event.action==KeyEvent.ACTION_UP && activeKey==code){
-                      activeKey=0; haptics.release(activeConfig); overlay?.onRelease()
+                      overlay?.let { v -> v.updateConfig(activeConfig); v.centerY = v.height * activeConfig.centerYRatio; v.onPress() }
+                  } else if (event.action == KeyEvent.ACTION_UP && activeKey == code) {
+                      activeKey = 0; haptics.release(activeConfig); overlay?.onRelease()
                   }
                   return activeConfig.suppressVolumeUi
               }
 
-              private fun canTrigger():Boolean{
-                  if(config.onlyWhenScreenOn && power?.isInteractive==false) return false
-                  val now=System.currentTimeMillis()
-                  if(now-lastTrigger<60_000L/config.rateLimitPerMinute.coerceAtLeast(1)) return false
-                  lastTrigger=now; return true
+              private fun canTrigger(): Boolean {
+                  if (config.onlyWhenScreenOn && power?.isInteractive == false) return false
+                  val now = System.currentTimeMillis()
+                  if (now - lastTrigger < 60_000L / config.rateLimitPerMinute.coerceAtLeast(1)) return false
+                  lastTrigger = now; return true
               }
 
-              override fun onAccessibilityEvent(e:AccessibilityEvent?){
-                  // Track foreground package for per-app profiles
-                  e?.packageName?.let{ currentPkg=it.toString() }
+              override fun onAccessibilityEvent(e: AccessibilityEvent?) {
+                  e?.packageName?.let { currentPkg = it.toString() }
               }
-              override fun onInterrupt(){}
-              override fun onDestroy(){ super.onDestroy(); try{overlay?.let{wm?.removeView(it)}}catch(_:Exception){} }
+              override fun onInterrupt() {}
+              override fun onDestroy() {
+                  super.onDestroy(); scope.cancel()
+                  try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
+              }
           }
           EOF
 
-          # 21. FloatingBubbleService (gesture trigger)
+          # 24. FloatingBubbleService
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/FloatingBubbleService.kt
           package com.edge.bezelmorph.engine
           import android.app.*
@@ -928,319 +1050,391 @@ jobs:
           import android.os.IBinder
           import android.view.*
           import android.widget.ImageView
-          import com.edge.bezelmorph.core.ConfigStore
+          import com.edge.bezelmorph.data.ConfigStore
           import com.edge.bezelmorph.ui.MainActivity
+          import dagger.hilt.android.AndroidEntryPoint
+          import kotlinx.coroutines.*
+          import kotlinx.coroutines.flow.first
+          import javax.inject.Inject
 
-          class FloatingBubbleService:Service(){
-              private var wm:WindowManager?=null; private var bubble:ImageView?=null
-              private lateinit var store:ConfigStore
-              override fun onCreate(){
-                  super.onCreate(); store=ConfigStore(this)
-                  val ch=NotificationChannel("bubble","Bubble",NotificationManager.IMPORTANCE_LOW)
+          @AndroidEntryPoint
+          class FloatingBubbleService : Service() {
+              @Inject lateinit var store: ConfigStore
+              private var wm: WindowManager? = null
+              private var bubble: ImageView? = null
+              private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+              override fun onCreate() {
+                  super.onCreate()
+                  val ch = NotificationChannel("bubble", "Bubble", NotificationManager.IMPORTANCE_LOW)
                   (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
-                  startForeground(2,Notification.Builder(this,"bubble")
+                  startForeground(2, Notification.Builder(this, "bubble")
                       .setContentTitle("Bezel Morph Bubble").setSmallIcon(android.R.drawable.ic_menu_compass).build())
               }
-              override fun onStartCommand(i:Intent?,f:Int,s:Int):Int{
-                  val c=store.load()
-                  if(!c.bubbleEnabled){ stopSelf(); return START_NOT_STICKY }
-                  if(bubble==null){
-                      wm=getSystemService(WINDOW_SERVICE) as WindowManager
-                      val p=WindowManager.LayoutParams(80,80,
-                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                          PixelFormat.TRANSLUCENT).apply{ x=c.bubbleX; y=c.bubbleY; gravity=Gravity.TOP or Gravity.START }
-                      bubble=ImageView(this).apply{
-                          setImageResource(android.R.drawable.ic_menu_compass)
-                          setBackgroundColor(0x8838BDF8.toInt())
-                          setOnClickListener{
-                              // Trigger the same overlay press
-                              val intent=Intent("com.edge.bezelmorph.TRIGGER")
-                              sendBroadcast(intent)
+
+              override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
+                  scope.launch {
+                      val c = store.load()
+                      if (!c.bubbleEnabled) { stopSelf(); return@launch }
+                      if (bubble == null) {
+                          wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                          val p = WindowManager.LayoutParams(80, 80,
+                              WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                              WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                              PixelFormat.TRANSLUCENT).apply { x = c.bubbleX; y = c.bubbleY; gravity = Gravity.TOP or Gravity.START }
+                          bubble = ImageView(this@FloatingBubbleService).apply {
+                              setImageResource(android.R.drawable.ic_menu_compass)
+                              setBackgroundColor(0x8838BDF8.toInt())
+                              setOnClickListener { sendBroadcast(Intent("com.edge.bezelmorph.TRIGGER")) }
                           }
+                          wm?.addView(bubble, p)
                       }
-                      wm?.addView(bubble,p)
                   }
                   return START_STICKY
               }
-              override fun onBind(i:Intent?):IBinder?=null
-              override fun onDestroy(){ super.onDestroy(); try{bubble?.let{wm?.removeView(it)}}catch(_:Exception){} }
+              override fun onBind(i: Intent?): IBinder? = null
+              override fun onDestroy() { super.onDestroy(); scope.cancel(); try { bubble?.let { wm?.removeView(it) } } catch (_: Exception) {} }
           }
           EOF
 
-          # 22. MainActivity (schema-driven, all features)
+          # 25. Compose UI (MainActivity)
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/MainActivity.kt
           package com.edge.bezelmorph.ui
           import android.accessibilityservice.AccessibilityServiceInfo
           import android.content.*
-          import android.graphics.*
+          import android.graphics.Color
+          import android.net.Uri
           import android.os.*
           import android.provider.Settings
-          import android.view.*
           import android.view.accessibility.AccessibilityManager
-          import android.widget.*
-          import androidx.appcompat.app.AppCompatActivity
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color as ComposeColor
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.hilt.navigation.compose.hiltViewModel
           import com.edge.bezelmorph.core.*
-          import com.edge.bezelmorph.engine.*
+          import com.edge.bezelmorph.engine.BezelOverlayView
+          import com.edge.bezelmorph.engine.HapticEngine
+          import dagger.hilt.android.AndroidEntryPoint
+          import kotlinx.coroutines.launch
+          import javax.inject.Inject
 
-          class MainActivity:AppCompatActivity(){
-              private lateinit var store:ConfigStore; private lateinit var config:MorphConfig
-              private lateinit var root:FrameLayout; private lateinit var gate:LinearLayout
-              private lateinit var dash:FrameLayout; private lateinit var preview:BezelOverlayView
-              private lateinit var haptics:HapticEngine; private var accIcon:ImageView?=null
+          @AndroidEntryPoint
+          class MainActivity : ComponentActivity() {
+              @Inject lateinit var store: ConfigStore
+              @Inject lateinit var haptics: HapticEngine
 
-              override fun onCreate(s:Bundle?){
-                  super.onCreate(s); store=ConfigStore(this); config=store.load()
-                  haptics=HapticEngine(this)
-                  root=FrameLayout(this).apply{setBackgroundColor(0xFF0F172A.toInt())}
-                  buildGate(); buildDash(); setContentView(root)
+              private val captureLauncher = registerForActivityResult(
+                  ActivityResultContracts.StartActivityForResult()
+              ) { res -> if (res.resultCode == RESULT_OK && res.data != null) { /* ScreenCaptureManager.start */ } }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent {
+                      MaterialTheme(colorScheme = darkColorScheme()) {
+                          Surface(modifier = Modifier.fillMaxSize().background(ComposeColor(0xFF0F172A))) {
+                              MainScreen()
+                          }
+                      }
+                  }
               }
-              override fun onResume(){
-                  super.onResume(); val ok=hasAccessibility()
-                  accIcon?.setImageResource(if(ok)R.drawable.ic_check_circle else R.drawable.ic_chevron_right)
-                  gate.visibility=if(ok)View.GONE else View.VISIBLE
-                  dash.visibility=if(ok)View.VISIBLE else View.GONE
+
+              @Composable
+              fun MainScreen() {
+                  val config = remember { mutableStateOf(MorphConfig()) }
+                  val hasAccess by remember { mutableStateOf(hasAccessibility()) }
+                  LaunchedEffect(Unit) { config.value = store.load() }
+
+                  if (!hasAccess) {
+                      PermissionGate(onGrant = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
+                  } else {
+                      Dashboard(config.value, onConfigChange = { newConfig ->
+                          config.value = newConfig
+                          lifecycleScope.launch { store.save(newConfig) }
+                      })
+                  }
               }
-              private fun hasAccessibility():Boolean{
-                  val am=getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
+
+              private fun hasAccessibility(): Boolean {
+                  val am = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
                   return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                      .any{it.id.contains(packageName)}
-              }
-
-              // Gate
-              private fun buildGate(){
-                  gate=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(48,80,48,48)}
-                  gate.addView(text("System Authorization",26f,Color.WHITE,true))
-                  gate.addView(text("Grant accessibility so the engine can observe hardware key events.",13f,0xFF94A3B8.toInt(),padTop=12))
-                  val c=card("Accessibility Interceptor","Monitors hardware key transitions.",R.drawable.ic_accessibility){
-                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                  }; accIcon=c.second; gate.addView(c.first)
-                  root.addView(gate,FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.MATCH_PARENT)
-              }
-
-              // Dashboard (schema-driven)
-              private fun buildDash(){
-                  dash=FrameLayout(this).apply{visibility=View.GONE}
-                  preview=BezelOverlayView(this).apply{updateConfig(config);setOnClickListener{refreshPreview()}}
-                  dash.addView(preview,FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.MATCH_PARENT)
-                  val scroll=ScrollView(this).apply{setBackgroundColor(0xFA0F172A.toInt());setPadding(36,28,36,48)}
-                  val form=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
-                  form.addView(text("Physical Edge Calibrator",20f,Color.WHITE,true))
-                  form.addView(text("Every parameter is live. Drag to see changes instantly.",12f,0xFF94A3B8.toInt(),padTop=8,padBottom=20))
-                  val actions=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
-                  actions.addView(button("Auto-Detect"){config=DeviceDatabase.autoDetect(this);store.save(config);refreshPreview()})
-                  actions.addView(button("Reset"){config=MorphConfig();store.save(config);refreshPreview()})
-                  form.addView(actions)
-                  ConfigSchema.ALL.groupBy{it.category}.forEach{(cat,fields)->
-                      form.addView(header(cat)); fields.forEach{form.addView(control(it))}
-                  }
-                  form.addView(header("Profiles & Data"))
-                  val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
-                  row.addView(button("Save"){saveProfileDialog()}); row.addView(button("Load"){loadProfileDialog()})
-                  row.addView(button("Export"){exportDialog()}); row.addView(button("Import"){importDialog()})
-                  form.addView(row)
-                  scroll.addView(form)
-                  dash.addView(scroll,FrameLayout.LayoutParams(-1,-2).apply{gravity=Gravity.BOTTOM})
-                  root.addView(dash,FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.MATCH_PARENT)
-              }
-
-              private fun control(f:ConfigField):View{
-                  return when(f.type){
-                      FieldType.FLOAT,FieldType.INT->{
-                          val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(0,8,0,8)}
-                          box.addView(text(f.label,12f,0xFFCBD5E1.toInt()))
-                          val valTv=TextView(this).apply{text=f.currentValue(this@MainActivity,config);setTextColor(0xFF38BDF8.toInt());textSize=12f}
-                          val bar=SeekBar(this).apply{
-                              max=((f.max-f.min)*f.scale).toInt()
-                              progress=((f.get(config)-f.min)*f.scale).toInt()
-                              setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
-                                  override fun onProgressChanged(sb:SeekBar?,p:Int,u:Boolean){
-                                      val real=f.min+p/f.scale; f.set(config,real)
-                                      valTv.text=f.currentValue(this@MainActivity,config)
-                                      store.save(config);refreshPreview()
-                                  }
-                                  override fun onStartTrackingTouch(sb:SeekBar?){}
-                                  override fun onStopTrackingTouch(sb:SeekBar?){preview.setStaticPreview(1f)}
-                              })
-                          }
-                          box.addView(valTv); box.addView(bar); box
-                      }
-                      FieldType.BOOLEAN->Switch(this).apply{
-                          text=f.label;setTextColor(0xFFCBD5E1.toInt())
-                          isChecked=f.get(config)>0.5f
-                          setOnCheckedChangeListener{_,c->f.set(config,if(c)1f else 0f);store.save(config);refreshPreview()}
-                      }
-                      FieldType.ENUM->{
-                          val r=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
-                          r.addView(text(f.label,12f,0xFFCBD5E1.toInt()),LinearLayout.LayoutParams(0,-2,1f))
-                          val sp=Spinner(this).apply{
-                              adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,f.enumValues)
-                              setSelection(f.get(config).toInt())
-                              onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
-                                  override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long){
-                                      f.set(config,pos.toFloat());store.save(config);refreshPreview()
-                                  }
-                                  override fun onNothingSelected(p:AdapterView<*>?){}
-                              }
-                          }
-                          r.addView(sp); r
-                      }
-                      FieldType.COLOR->Button(this).apply{
-                          text=f.label
-                          setOnClickListener{
-                              val colors=intArrayOf(Color.BLACK,0xFF1E293B.toInt(),0xFF38BDF8.toInt(),Color.WHITE)
-                              android.app.AlertDialog.Builder(this@MainActivity)
-                                  .setTitle(f.label).setItems(arrayOf("Black","Slate","Sky","White")){_,w->
-                                      f.set(config,colors[w].toFloat());store.save(config);refreshPreview()
-                                  }.show()
-                          }
-                      }
-                  }
-              }
-
-              private fun refreshPreview(){
-                  preview.updateConfig(config)
-                  preview.post{preview.centerY=preview.height*config.centerYRatio;preview.setStaticPreview(1f)}
-              }
-              private fun saveProfileDialog(){
-                  val e=EditText(this)
-                  android.app.AlertDialog.Builder(this).setTitle("Name").setView(e)
-                      .setPositiveButton("Save"){_,_->store.saveProfile(e.text.toString().ifBlank{"default"},config)}.show()
-              }
-              private fun loadProfileDialog(){
-                  val names=store.listProfiles().toTypedArray()
-                  if(names.isEmpty()){Toast.makeText(this,"No profiles",Toast.LENGTH_SHORT).show();return}
-                  android.app.AlertDialog.Builder(this).setTitle("Load").setItems(names){_,w->
-                      store.loadProfile(names[w])?.let{config=it;store.save(config);refreshPreview()}
-                  }.show()
-              }
-              private fun exportDialog(){
-                  val i=Intent(Intent.ACTION_SEND).apply{type="application/json";putExtra(Intent.EXTRA_TEXT,store.exportAll())}
-                  startActivity(Intent.createChooser(i,"Export"))
-              }
-              private fun importDialog(){
-                  val e=EditText(this).apply{hint="Paste JSON";minLines=4}
-                  android.app.AlertDialog.Builder(this).setTitle("Import").setView(e)
-                      .setPositiveButton("Import"){_,_->try{store.importAll(e.text.toString());config=store.load();refreshPreview()}catch(ex:Exception){}}.show()
-              }
-
-              // helpers
-              private fun text(s:String,sz:Float,col:Int,bold:Boolean=false,padTop:Int=0,padBottom:Int=0)=
-                  TextView(this).apply{text=s;textSize=sz;setTextColor(col);if(bold)typeface=Typeface.DEFAULT_BOLD;setPadding(0,padTop,0,padBottom)}
-              private fun header(s:String)=TextView(this).apply{text=s;textSize=14f;setTextColor(0xFF38BDF8.toInt());typeface=Typeface.DEFAULT_BOLD;setPadding(0,28,0,8)}
-              private fun button(l:String,onClick:()->Unit)=Button(this).apply{text=l;setOnClickListener{onClick()}}
-              private fun card(t:String,d:String,ic:Int,onClick:()->Unit):Pair<LinearLayout,ImageView>{
-                  val c=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;
-                      setPadding(28,24,28,24);background=android.graphics.drawable.GradientDrawable().apply{setColor(0xFF1E293B.toInt());cornerRadius=20f};
-                      isClickable=true;setOnClickListener{onClick()}}
-                  c.layoutParams=LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,0,0,20)}
-                  val iv=ImageView(this).apply{setImageResource(ic);layoutParams=LinearLayout.LayoutParams(56,56)}
-                  c.addView(iv)
-                  val col=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,0,16,0);layoutParams=LinearLayout.LayoutParams(0,-2,1f)}
-                  col.addView(text(t,15f,Color.WHITE,true));col.addView(text(d,12f,0xFF94A3B8.toInt(),padTop=4))
-                  c.addView(col)
-                  val st=ImageView(this).apply{setImageResource(R.drawable.ic_chevron_right);layoutParams=LinearLayout.LayoutParams(40,40)}
-                  c.addView(st); return c to st
+                      .any { it.id.contains(packageName) }
               }
           }
           EOF
 
-          # 23. ConfigSchema (all tunables)
+          # 26. ConfigSchema for Compose
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/ConfigSchema.kt
           package com.edge.bezelmorph.ui
-          import android.content.Context
+          import androidx.compose.runtime.*
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.material3.*
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.unit.dp
           import com.edge.bezelmorph.core.*
 
-          enum class FieldType { FLOAT,INT,BOOLEAN,ENUM,COLOR }
+          enum class FieldType { FLOAT, INT, BOOLEAN, ENUM, COLOR }
           data class ConfigField(
-              val label:String,val type:FieldType,val category:String,
-              val min:Float=0f,val max:Float=1f,val scale:Float=1f,
-              val enumValues:Array<String> = emptyArray(),
-              val get:(MorphConfig)->Float,val set:(MorphConfig,Float)->Unit
-          ){
-              fun currentValue(ctx:Context,c:MorphConfig):String = when(type){
-                  FieldType.BOOLEAN->if(get(c)>0.5f)"ON" else "OFF"
-                  FieldType.ENUM->enumValues.getOrElse(get(c).toInt()){"?"}
-                  FieldType.COLOR->String.format("#%06X",get(c).toInt() and 0xFFFFFF)
-                  else->if(scale>1f)String.format("%.1f",get(c)) else get(c).toInt().toString()
+              val label: String, val type: FieldType, val category: String,
+              val min: Float = 0f, val max: Float = 1f, val scale: Float = 1f,
+              val enumValues: List<String> = emptyList(),
+              val get: (MorphConfig) -> Float, val set: (MorphConfig, Float) -> Unit
+          ) {
+              fun currentValue(c: MorphConfig): String = when (type) {
+                  FieldType.BOOLEAN -> if (get(c) > 0.5f) "ON" else "OFF"
+                  FieldType.ENUM -> enumValues.getOrElse(get(c).toInt()) { "?" }
+                  FieldType.COLOR -> String.format("#%06X", get(c).toInt() and 0xFFFFFF)
+                  else -> if (scale > 1f) String.format("%.1f", get(c)) else get(c).toInt().toString()
               }
           }
 
           object ConfigSchema {
               val ALL = listOf(
-                  ConfigField("Edge","",FieldType.ENUM,"Geometry",enumValues=Edge.entries.map{it.name}.toTypedArray(),
-                      get={it.edge.ordinal.toFloat()},set={c,v->c.edge=Edge.entries[v.toInt()]}),
-                  ConfigField("Center Y (%)","",FieldType.FLOAT,"Geometry",min=0.05f,max=0.95f,scale=1000f,
-                      get={it.centerYRatio},set={c,v->c.centerYRatio=v}),
-                  ConfigField("Plateau (dp)","",FieldType.FLOAT,"Geometry",min=12f,max=80f,
-                      get={it.y0Dp},set={c,v->c.y0Dp=v}),
-                  ConfigField("Shoulder (dp)","",FieldType.FLOAT,"Geometry",min=15f,max=100f,
-                      get={it.wDp},set={c,v->c.wDp=v}),
-                  ConfigField("Depth (dp)","",FieldType.FLOAT,"Geometry",min=6f,max=45f,
-                      get={it.depthDp},set={c,v->c.depthDp=v}),
-                  ConfigField("Shape","",FieldType.ENUM,"Shape",enumValues=ShapeProfile.entries.map{it.name}.toTypedArray(),
-                      get={it.shapeProfile.ordinal.toFloat()},set={c,v->c.shapeProfile=ShapeProfile.entries[v.toInt()]}),
-                  ConfigField("Resonance","",FieldType.FLOAT,"Physics",min=30f,max=95f,
-                      get={it.omegaN},set={c,v->c.omegaN=v}),
-                  ConfigField("Damping","",FieldType.FLOAT,"Physics",min=0.5f,max=0.99f,scale=100f,
-                      get={it.zeta},set={c,v->c.zeta=v}),
-                  ConfigField("Impulse","",FieldType.FLOAT,"Physics",min=500f,max=4000f,
-                      get={it.inwardVelocity},set={c,v->c.inwardVelocity=v}),
-                  ConfigField("Substepping","",FieldType.BOOLEAN,"Physics",
-                      get={if(it.substepping)1f else 0f},set={c,v->c.substepping=v>0.5f}),
-                  ConfigField("Fill mode","",FieldType.ENUM,"Fill",enumValues=FillMode.entries.map{it.name}.toTypedArray(),
-                      get={it.fillMode.ordinal.toFloat()},set={c,v->c.fillMode=FillMode.entries[v.toInt()]}),
-                  ConfigField("Primary color","",FieldType.COLOR,"Fill",
-                      get={it.fillColor.toFloat()},set={c,v->c.fillColor=v.toInt()}),
-                  ConfigField("Inner shadow","",FieldType.BOOLEAN,"Fill",
-                      get={if(it.innerShadow)1f else 0f},set={c,v->c.innerShadow=v>0.5f}),
-                  ConfigField("Rim light","",FieldType.BOOLEAN,"Fill",
-                      get={if(it.rimLight)1f else 0f},set={c,v->c.rimLight=v>0.5f}),
-                  ConfigField("Haptics","",FieldType.BOOLEAN,"Haptics",
-                      get={if(it.hapticEnabled)1f else 0f},set={c,v->c.hapticEnabled=v>0.5f}),
-                  ConfigField("Press effect","",FieldType.ENUM,"Haptics",enumValues=arrayOf("TICK","CLICK","HEAVY","DOUBLE"),
-                      get={it.pressEffect.toFloat()},set={c,v->c.pressEffect=v.toInt()}),
-                  ConfigField("Click sound","",FieldType.BOOLEAN,"Haptics",
-                      get={if(it.clickSoundEnabled)1f else 0f},set={c,v->c.clickSoundEnabled=v>0.5f}),
-                  ConfigField("Suppress volume UI","",FieldType.BOOLEAN,"Behavior",
-                      get={if(it.suppressVolumeUi)1f else 0f},set={c,v->c.suppressVolumeUi=v>0.5f}),
-                  ConfigField("Rate limit/min","",FieldType.INT,"Behavior",min=1f,max=120f,
-                      get={it.rateLimitPerMinute.toFloat()},set={c,v->c.rateLimitPerMinute=v.toInt()}),
-                  ConfigField("Adaptive FPS","",FieldType.BOOLEAN,"Behavior",
-                      get={if(it.adaptiveFps)1f else 0f},set={c,v->c.adaptiveFps=v>0.5f}),
-                  ConfigField("Reduce motion","",FieldType.BOOLEAN,"Behavior",
-                      get={if(it.reduceMotion)1f else 0f},set={c,v->c.reduceMotion=v>0.5f}),
-                  ConfigField("Gesture edge swipe","",FieldType.BOOLEAN,"Advanced",
-                      get={if(it.gestureEdgeSwipeEnabled)1f else 0f},set={c,v->c.gestureEdgeSwipeEnabled=v>0.5f}),
-                  ConfigField("Show notification","",FieldType.BOOLEAN,"Advanced",
-                      get={if(it.showStatusNotification)1f else 0f},set={c,v->c.showStatusNotification=v>0.5f}),
-                  ConfigField("Floating bubble","",FieldType.BOOLEAN,"Advanced",
-                      get={if(it.bubbleEnabled)1f else 0f},set={c,v->c.bubbleEnabled=v>0.5f})
+                  ConfigField("Edge", FieldType.ENUM, "Geometry", enumValues = Edge.entries.map { it.name },
+                      get = { it.edge.ordinal.toFloat() }, set = { c, v -> c.edge = Edge.entries[v.toInt()] }),
+                  ConfigField("Center Y (%)", FieldType.FLOAT, "Geometry", min = 0.05f, max = 0.95f, scale = 1000f,
+                      get = { it.centerYRatio }, set = { c, v -> c.centerYRatio = v }),
+                  ConfigField("Plateau (dp)", FieldType.FLOAT, "Geometry", min = 12f, max = 80f,
+                      get = { it.y0Dp }, set = { c, v -> c.y0Dp = v }),
+                  ConfigField("Shoulder (dp)", FieldType.FLOAT, "Geometry", min = 15f, max = 100f,
+                      get = { it.wDp }, set = { c, v -> c.wDp = v }),
+                  ConfigField("Depth (dp)", FieldType.FLOAT, "Geometry", min = 6f, max = 45f,
+                      get = { it.depthDp }, set = { c, v -> c.depthDp = v }),
+                  ConfigField("Shape", FieldType.ENUM, "Shape", enumValues = ShapeProfile.entries.map { it.name },
+                      get = { it.shapeProfile.ordinal.toFloat() }, set = { c, v -> c.shapeProfile = ShapeProfile.entries[v.toInt()] }),
+                  ConfigField("Resonance", FieldType.FLOAT, "Physics", min = 30f, max = 95f,
+                      get = { it.omegaN }, set = { c, v -> c.omegaN = v }),
+                  ConfigField("Damping", FieldType.FLOAT, "Physics", min = 0.5f, max = 0.99f, scale = 100f,
+                      get = { it.zeta }, set = { c, v -> c.zeta = v }),
+                  ConfigField("Impulse", FieldType.FLOAT, "Physics", min = 500f, max = 4000f,
+                      get = { it.inwardVelocity }, set = { c, v -> c.inwardVelocity = v }),
+                  ConfigField("Substepping", FieldType.BOOLEAN, "Physics",
+                      get = { if (it.substepping) 1f else 0f }, set = { c, v -> c.substepping = v > 0.5f }),
+                  ConfigField("Fill mode", FieldType.ENUM, "Fill", enumValues = FillMode.entries.map { it.name },
+                      get = { it.fillMode.ordinal.toFloat() }, set = { c, v -> c.fillMode = FillMode.entries[v.toInt()] }),
+                  ConfigField("Primary color", FieldType.COLOR, "Fill",
+                      get = { it.fillColor.toFloat() }, set = { c, v -> c.fillColor = v.toInt() }),
+                  ConfigField("Inner shadow", FieldType.BOOLEAN, "Fill",
+                      get = { if (it.innerShadow) 1f else 0f }, set = { c, v -> c.innerShadow = v > 0.5f }),
+                  ConfigField("Rim light", FieldType.BOOLEAN, "Fill",
+                      get = { if (it.rimLight) 1f else 0f }, set = { c, v -> c.rimLight = v > 0.5f }),
+                  ConfigField("Haptics", FieldType.BOOLEAN, "Haptics",
+                      get = { if (it.hapticEnabled) 1f else 0f }, set = { c, v -> c.hapticEnabled = v > 0.5f }),
+                  ConfigField("Press effect", FieldType.ENUM, "Haptics", enumValues = listOf("TICK", "CLICK", "HEAVY", "DOUBLE"),
+                      get = { it.pressEffect.toFloat() }, set = { c, v -> c.pressEffect = v.toInt() }),
+                  ConfigField("Click sound", FieldType.BOOLEAN, "Haptics",
+                      get = { if (it.clickSoundEnabled) 1f else 0f }, set = { c, v -> c.clickSoundEnabled = v > 0.5f }),
+                  ConfigField("Suppress volume UI", FieldType.BOOLEAN, "Behavior",
+                      get = { if (it.suppressVolumeUi) 1f else 0f }, set = { c, v -> c.suppressVolumeUi = v > 0.5f }),
+                  ConfigField("Rate limit/min", FieldType.INT, "Behavior", min = 1f, max = 120f,
+                      get = { it.rateLimitPerMinute.toFloat() }, set = { c, v -> c.rateLimitPerMinute = v.toInt() }),
+                  ConfigField("Adaptive FPS", FieldType.BOOLEAN, "Behavior",
+                      get = { if (it.adaptiveFps) 1f else 0f }, set = { c, v -> c.adaptiveFps = v > 0.5f }),
+                  ConfigField("Reduce motion", FieldType.BOOLEAN, "Behavior",
+                      get = { if (it.reduceMotion) 1f else 0f }, set = { c, v -> c.reduceMotion = v > 0.5f }),
+                  ConfigField("Gesture edge swipe", FieldType.BOOLEAN, "Advanced",
+                      get = { if (it.gestureEdgeSwipeEnabled) 1f else 0f }, set = { c, v -> c.gestureEdgeSwipeEnabled = v > 0.5f }),
+                  ConfigField("Show notification", FieldType.BOOLEAN, "Advanced",
+                      get = { if (it.showStatusNotification) 1f else 0f }, set = { c, v -> c.showStatusNotification = v > 0.5f }),
+                  ConfigField("Floating bubble", FieldType.BOOLEAN, "Advanced",
+                      get = { if (it.bubbleEnabled) 1f else 0f }, set = { c, v -> c.bubbleEnabled = v > 0.5f }),
+                  ConfigField("Script enabled", FieldType.BOOLEAN, "Advanced",
+                      get = { if (it.scriptEnabled) 1f else 0f }, set = { c, v -> c.scriptEnabled = v > 0.5f }),
+                  ConfigField("Click volume", FieldType.FLOAT, "Advanced", min = 0f, max = 1f, scale = 100f,
+                      get = { it.clickVolume.toFloat() }, set = { c, v -> c.clickVolume = v.toInt() })
               )
           }
           EOF
 
-          # 24. QuickSettingsTile
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/integration/QuickSettingsTile.kt
-          package com.edge.bezelmorph.integration
-          import android.service.quicksettings.Tile
-          import android.service.quicksettings.TileService
-          import com.edge.bezelmorph.core.ConfigStore
+          # 27. Dashboard Compose screen
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/Dashboard.kt
+          package com.edge.bezelmorph.ui
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color as ComposeColor
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import com.edge.bezelmorph.core.*
+          import com.edge.bezelmorph.engine.BezelOverlayView
 
-          class QuickSettingsTile:TileService(){
-              override fun onStartListening(){
-                  super.onStartListening(); val c=ConfigStore(this).load()
-                  qsTile?.apply{state=if(c.hapticEnabled)Tile.STATE_ACTIVE else Tile.STATE_INACTIVE;updateTile()}
+          @Composable
+          fun Dashboard(config: MorphConfig, onConfigChange: (MorphConfig) -> Unit) {
+              Column(modifier = Modifier.fillMaxSize().background(ComposeColor(0xFF0F172A))) {
+                  Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                      BezelPreview(config)
+                  }
+                  Column(modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
+                      Text("Physical Edge Calibrator", color = ComposeColor.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                      Text("Every parameter is live. Drag to see changes instantly.",
+                          color = ComposeColor(0xFF94A3B8), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
+                      ConfigSchema.ALL.groupBy { it.category }.forEach { (category, fields) ->
+                          Text(category, color = ComposeColor(0xFF38BDF8), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                              modifier = Modifier.padding(top = 24.dp, bottom = 8.dp))
+                          fields.forEach { field ->
+                              ControlField(field, config, onConfigChange)
+                          }
+                      }
+                  }
               }
-              override fun onClick(){
-                  super.onClick(); val s=ConfigStore(this); val c=s.load()
-                  c.hapticEnabled=!c.hapticEnabled; s.save(c)
-                  qsTile?.apply{state=if(c.hapticEnabled)Tile.STATE_ACTIVE else Tile.STATE_INACTIVE;updateTile()}
+          }
+
+          @Composable
+          fun ControlField(field: ConfigField, config: MorphConfig, onChange: (MorphConfig) -> Unit) {
+              when (field.type) {
+                  FieldType.FLOAT, FieldType.INT -> {
+                      Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                          Text(field.label, color = ComposeColor(0xFFCBD5E1), fontSize = 12.sp)
+                          Text(field.currentValue(config), color = ComposeColor(0xFF38BDF8), fontSize = 12.sp)
+                          Slider(
+                              value = field.get(config),
+                              onValueChange = { v ->
+                                  val newConfig = config.copy().also { field.set(it, v) }
+                                  onChange(newConfig)
+                              },
+                              valueRange = field.min..field.max
+                          )
+                      }
+                  }
+                  FieldType.BOOLEAN -> {
+                      Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                          Text(field.label, color = ComposeColor(0xFFCBD5E1), fontSize = 14.sp)
+                          Switch(
+                              checked = field.get(config) > 0.5f,
+                              onCheckedChange = { checked ->
+                                  val newConfig = config.copy().also { field.set(it, if (checked) 1f else 0f) }
+                                  onChange(newConfig)
+                              }
+                          )
+                      }
+                  }
+                  FieldType.ENUM -> {
+                      var expanded by remember { mutableStateOf(false) }
+                      Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                          Text(field.label, color = ComposeColor(0xFFCBD5E1), fontSize = 12.sp)
+                          Box {
+                              Button(onClick = { expanded = true }) {
+                                  Text(field.enumValues.getOrElse(field.get(config).toInt()) { "?" })
+                              }
+                              DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                  field.enumValues.forEachIndexed { index, value ->
+                                      DropdownMenuItem(
+                                          text = { Text(value) },
+                                          onClick = {
+                                              val newConfig = config.copy().also { field.set(it, index.toFloat()) }
+                                              onChange(newConfig)
+                                              expanded = false
+                                          }
+                                      )
+                                  }
+                              }
+                          }
+                      }
+                  }
+                  FieldType.COLOR -> {
+                      Button(onClick = { /* color picker dialog */ }) {
+                          Text("${field.label}: ${field.currentValue(config)}")
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun BezelPreview(config: MorphConfig) {
+              AndroidView(factory = { context ->
+                  BezelOverlayView(context).apply {
+                      updateConfig(config)
+                      centerY = height * config.centerYRatio
+                      setStaticPreview(1f)
+                  }
+              }, update = { view ->
+                  view.updateConfig(config)
+                  view.centerY = view.height * config.centerYRatio
+                  view.setStaticPreview(1f)
+              })
+          }
+          EOF
+
+          # 28. PermissionGate
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/PermissionGate.kt
+          package com.edge.bezelmorph.ui
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.Composable
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color as ComposeColor
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+
+          @Composable
+          fun PermissionGate(onGrant: () -> Unit) {
+              Column(
+                  modifier = Modifier.fillMaxSize().background(ComposeColor(0xFF0F172A)).padding(32.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.Center
+              ) {
+                  Text("System Authorization", color = ComposeColor.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                  Text("Grant accessibility so the engine can observe hardware key events.",
+                      color = ComposeColor(0xFF94A3B8), fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp, bottom = 32.dp))
+                  Button(onClick = onGrant, modifier = Modifier.fillMaxWidth()) {
+                      Text("Grant Accessibility")
+                  }
               }
           }
           EOF
 
-          # 25. Widget + AutomationReceiver
+          # 29. QuickSettingsTile
+          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/integration/QuickSettingsTile.kt
+          package com.edge.bezelmorph.integration
+          import android.service.quicksettings.Tile
+          import android.service.quicksettings.TileService
+          import com.edge.bezelmorph.data.ConfigStore
+          import kotlinx.coroutines.*
+          import kotlinx.coroutines.flow.first
+
+          class QuickSettingsTile : TileService() {
+              private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+              override fun onStartListening() {
+                  super.onStartListening()
+                  scope.launch {
+                      val c = ConfigStore(this@QuickSettingsTile).load()
+                      qsTile?.apply { state = if (c.hapticEnabled) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE; updateTile() }
+                  }
+              }
+              override fun onClick() {
+                  super.onClick()
+                  scope.launch {
+                      val s = ConfigStore(this@QuickSettingsTile); val c = s.load()
+                      val newConfig = c.copy(hapticEnabled = !c.hapticEnabled)
+                      s.save(newConfig)
+                      qsTile?.apply { state = if (newConfig.hapticEnabled) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE; updateTile() }
+                  }
+              }
+              override fun onDestroy() { super.onDestroy(); scope.cancel() }
+          }
+          EOF
+
+          # 30. Widget + AutomationReceiver + BootReceiver
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/integration/BezelWidgetProvider.kt
           package com.edge.bezelmorph.integration
           import android.appwidget.AppWidgetManager
@@ -1248,15 +1442,18 @@ jobs:
           import android.content.Context
           import android.widget.RemoteViews
           import com.edge.bezelmorph.R
-          import com.edge.bezelmorph.core.ConfigStore
+          import com.edge.bezelmorph.data.ConfigStore
+          import kotlinx.coroutines.*
 
-          class BezelWidgetProvider:AppWidgetProvider(){
-              override fun onUpdate(ctx:Context,mgr:AppWidgetManager,ids:IntArray){
-                  val c=ConfigStore(ctx).load()
-                  ids.forEach{ id->
-                      val v=RemoteViews(ctx.packageName,R.layout.widget_bezel)
-                      v.setTextViewText(R.id.widget_status,if(c.hapticEnabled)"Bezel Morph: ON" else "Bezel Morph: OFF")
-                      mgr.updateAppWidget(id,v)
+          class BezelWidgetProvider : AppWidgetProvider() {
+              override fun onUpdate(ctx: Context, mgr: AppWidgetManager, ids: IntArray) {
+                  runBlocking {
+                      val c = ConfigStore(ctx).load()
+                      ids.forEach { id ->
+                          val v = RemoteViews(ctx.packageName, R.layout.widget_bezel)
+                          v.setTextViewText(R.id.widget_status, if (c.hapticEnabled) "Bezel Morph: ON" else "Bezel Morph: OFF")
+                          mgr.updateAppWidget(id, v)
+                      }
                   }
               }
           }
@@ -1267,20 +1464,18 @@ jobs:
           import android.content.BroadcastReceiver
           import android.content.Context
           import android.content.Intent
-          import com.edge.bezelmorph.core.ConfigStore
+          import com.edge.bezelmorph.data.ConfigStore
+          import kotlinx.coroutines.*
 
-          class AutomationReceiver:BroadcastReceiver(){
-              override fun onReceive(ctx:Context,intent:Intent){
-                  val store=ConfigStore(ctx)
-                  when(intent.action){
-                      "com.edge.bezelmorph.TRIGGER"->{
-                          // Forward to the accessibility service via a broadcast
-                          val i=Intent("com.edge.bezelmorph.INTERNAL_TRIGGER")
-                          ctx.sendBroadcast(i)
-                      }
-                      "com.edge.bezelmorph.SET_PROFILE"->{
-                          intent.getStringExtra("profile")?.let{ name->
-                              store.loadProfile(name)?.let{ store.save(it) }
+          class AutomationReceiver : BroadcastReceiver() {
+              override fun onReceive(ctx: Context, intent: Intent) {
+                  val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+                  val store = ConfigStore(ctx)
+                  when (intent.action) {
+                      "com.edge.bezelmorph.TRIGGER" -> ctx.sendBroadcast(Intent("com.edge.bezelmorph.INTERNAL_TRIGGER"))
+                      "com.edge.bezelmorph.SET_PROFILE" -> {
+                          intent.getStringExtra("profile")?.let { name ->
+                              scope.launch { store.loadProfile(name)?.let { store.save(it) } }
                           }
                       }
                   }
@@ -1293,14 +1488,19 @@ jobs:
           import android.content.BroadcastReceiver
           import android.content.Context
           import android.content.Intent
-          import com.edge.bezelmorph.core.ConfigStore
+          import com.edge.bezelmorph.data.ConfigStore
+          import kotlinx.coroutines.*
 
-          class BootReceiver:BroadcastReceiver(){
-              override fun onReceive(ctx:Context,i:Intent){ if(i.action==Intent.ACTION_BOOT_COMPLETED) ConfigStore(ctx).load() }
+          class BootReceiver : BroadcastReceiver() {
+              override fun onReceive(ctx: Context, i: Intent) {
+                  if (i.action == Intent.ACTION_BOOT_COMPLETED) {
+                      CoroutineScope(Dispatchers.IO).launch { ConfigStore(ctx).load() }
+                  }
+              }
           }
           EOF
 
-          # 26. Remaining drawables + XML
+          # 31. Remaining drawables + XML
           cat << 'EOF' > app/src/main/res/drawable/ic_check_circle.xml
           <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp"
               android:viewportWidth="24" android:viewportHeight="24">
@@ -1352,13 +1552,11 @@ jobs:
           </shortcuts>
           EOF
 
-      # ── GRADLE SETUP ──────────────────────────────────────────────────
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.1.0
 
-      # ── CONDITIONAL KEYSTORE (the fixed block) ─────────────────────────
       - name: Decode Release Keystore (optional)
         if: env.HAS_KEYSTORE == 'true'
         run: echo "${{ env.KEYSTORE_BASE64 }}" | base64 --decode > app/release.keystore
