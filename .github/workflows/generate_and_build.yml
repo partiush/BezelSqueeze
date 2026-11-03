@@ -1,4 +1,4 @@
-name: Generate Project & Build APK
+name: Generate Production APK
 
 on:
   push:
@@ -15,18 +15,19 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Scaffold Project Files
+      - name: Scaffold Production Project Files
         run: |
           mkdir -p gradle/wrapper
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/java/com/edge/bezelmorph
 
-          # 1. gradle.properties
+          # 1. gradle.properties (Optimized JVM & Daemon configuration)
           cat << 'EOF' > gradle.properties
           android.useAndroidX=true
           android.nonTransitiveRClass=true
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx3072m -XX:+UseG1GC -Dfile.encoding=UTF-8
           EOF
 
           # 2. settings.gradle.kts
@@ -52,12 +53,12 @@ jobs:
           # 3. Root build.gradle.kts
           cat << 'EOF' > build.gradle.kts
           plugins {
-              id("com.android.application") version "8.2.2" apply false
-              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
           }
           EOF
 
-          # 4. app/build.gradle.kts
+          # 4. app/build.gradle.kts (Compatible down to Android 8.0 Oreo up to Android 15/16/17 SDK 35)
           cat << 'EOF' > app/build.gradle.kts
           plugins {
               id("com.android.application")
@@ -66,14 +67,14 @@ jobs:
 
           android {
               namespace = "com.edge.bezelmorph"
-              compileSdk = 34
+              compileSdk = 35
 
               defaultConfig {
                   applicationId = "com.edge.bezelmorph"
-                  minSdk = 28
-                  targetSdk = 34
-                  versionCode = 17
-                  versionName = "17.0"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 12
+                  versionName = "12.0"
               }
 
               compileOptions {
@@ -86,24 +87,68 @@ jobs:
           }
 
           dependencies {
-              implementation("androidx.core:core-ktx:1.12.0")
-              implementation("androidx.appcompat:appcompat:1.6.1")
-              implementation("com.google.android.material:material:1.11.0")
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.material:material:1.12.0")
           }
           EOF
 
-          # 5. Manifest (Enhanced System Privileges)
+          # 5. Production Vector Drawables
+          cat << 'EOF' > app/src/main/res/drawable/ic_check_circle.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#10B981"
+                  android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM10,17l-5,-5 1.41,-1.41L10,14.17l7.59,-7.59L19,8l-9,9z"/>
+          </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/drawable/ic_chevron_right.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#94A3B8"
+                  android:pathData="M10,6L8.59,7.41 13.17,12l-4.58,4.59L10,18l6,-6z"/>
+          </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/drawable/ic_accessibility.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#3B82F6"
+                  android:pathData="M12,2c1.1,0 2,0.9 2,2s-0.9,2 -2,2 -2,-0.9 -2,-2 0.9,-2 2,-2zm9,7h-6v13h-2v-6h-2v6H9V9H3V7h18v2z"/>
+          </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/drawable/ic_overlay.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#3B82F6"
+                  android:pathData="M19,3H5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2V5c0,-1.1 -0.9,-2 -2,-2zm-7,14h-2v-4H6v-2h4V7h2v4h4v2h-4v4z"/>
+          </vector>
+          EOF
+
+          # 6. AndroidManifest.xml (Strict, clean, non-bloated, Android 8 to 17 compatible)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
               <uses-permission android:name="android.permission.VIBRATE" />
-              <uses-permission android:name="android.permission.WAKE_LOCK" />
-              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
               <application
                   android:allowBackup="true"
@@ -125,8 +170,6 @@ jobs:
                   <service
                       android:name=".HardwareKeyMonitorService"
                       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-                      android:foregroundServiceType="specialUse"
-                      android:stopWithTask="false"
                       android:exported="true">
                       <intent-filter>
                           <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -135,29 +178,17 @@ jobs:
                           android:name="android.accessibilityservice"
                           android:resource="@xml/button_event_service_config" />
                   </service>
-
-                  <receiver
-                      android:name=".BootCompletedReceiver"
-                      android:enabled="true"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.BOOT_COMPLETED" />
-                          <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                          <category android:name="android.intent.category.DEFAULT" />
-                      </intent-filter>
-                  </receiver>
               </application>
           </manifest>
           EOF
 
-          # 6. Service Configuration
+          # 7. Accessibility Service XML Configuration
           cat << 'EOF' > app/src/main/res/xml/button_event_service_config.xml
           <?xml version="1.0" encoding="utf-8"?>
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
               android:accessibilityEventTypes="typeAllMask"
               android:accessibilityFeedbackType="feedbackGeneric"
-              android:accessibilityFlags="flagRequestFilterKeyEvents|flagIncludeNotImportantViews|flagReportViewIds"
+              android:accessibilityFlags="flagRequestFilterKeyEvents"
               android:canRequestFilterKeyEvents="true"
               android:canRetrieveWindowContent="false"
               android:description="@string/service_description" />
@@ -165,157 +196,77 @@ jobs:
 
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
-              <string name="app_name">Bezel Morph Engine</string>
-              <string name="service_description">Hardware physical button perimeter synchronizer.</string>
+              <string name="app_name">Bezel Morph</string>
+              <string name="service_description">Hardware perimeter displacement engine.</string>
           </resources>
           EOF
 
           cat << 'EOF' > app/src/main/res/values/styles.xml
           <resources>
               <style name="Theme.MorphEdge" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-                  <item name="android:windowBackground">#000000</item>
-                  <item name="android:statusBarColor">#000000</item>
-                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:windowBackground">#0F172A</item>
+                  <item name="android:statusBarColor">#0F172A</item>
+                  <item name="android:navigationBarColor">#0F172A</item>
               </style>
           </resources>
           EOF
 
-          # 7. Boot Receiver
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BootCompletedReceiver.kt
-          package com.edge.bezelmorph
-
-          import android.content.BroadcastReceiver
-          import android.content.Context
-          import android.content.Intent
-
-          class BootCompletedReceiver : BroadcastReceiver() {
-              override fun onReceive(context: Context, intent: Intent) {
-                  val store = MorphConfigStore(context)
-                  val _unused = store.isLeftEdge
-              }
-          }
-          EOF
-
-          # 8. Fast In-Memory Config Store
+          # 8. Optimized Configuration Store with Real Physical Defaults
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
           import android.content.Context
           import android.content.SharedPreferences
-          import android.util.SparseArray
-          import org.json.JSONArray
-          import org.json.JSONObject
-
-          data class KeyItem(
-              var id: String,
-              var name: String,
-              var keyCode: Int,
-              var ratio: Float,
-              var isLeftEdge: Boolean
-          )
 
           class MorphConfigStore(context: Context) {
               private val prefs: SharedPreferences = context.getSharedPreferences("bezel_morph_pref", Context.MODE_PRIVATE)
-              private var cachedKeyMap: SparseArray<KeyItem>? = null
 
-              var isListeningForKey: Boolean = false
-              var onKeyDetectedCallback: ((Int) -> Unit)? = null
+              var volumeUpRatio: Float
+                  get() = prefs.getFloat("v_up_ratio", 0.228f)
+                  set(v) = prefs.edit().putFloat("v_up_ratio", v).apply()
+
+              var volumeDownRatio: Float
+                  get() = prefs.getFloat("v_down_ratio", 0.315f)
+                  set(v) = prefs.edit().putFloat("v_down_ratio", v).apply()
 
               var flatTopHalfLengthY0: Float
-                  get() = prefs.getFloat("y0_val", 50f)
+                  get() = prefs.getFloat("y0_val", 28f)
                   set(v) = prefs.edit().putFloat("y0_val", v).apply()
 
               var blendTransitionW: Float
-                  get() = prefs.getFloat("w_val", 85f)
+                  get() = prefs.getFloat("w_val", 38f)
                   set(v) = prefs.edit().putFloat("w_val", v).apply()
 
               var peakAmplitudeA: Float
-                  get() = prefs.getFloat("peak_amp_A", 54f)
+                  get() = prefs.getFloat("peak_amp_A", 16f)
                   set(v) = prefs.edit().putFloat("peak_amp_A", v).apply()
 
               var speedOverall: Float
-                  get() = prefs.getFloat("speed_omega", 44.0f)
+                  get() = prefs.getFloat("speed_omega", 68.0f)
                   set(v) = prefs.edit().putFloat("speed_omega", v).apply()
 
               var inwardImpulse: Float
-                  get() = prefs.getFloat("speed_inward", 2100f)
+                  get() = prefs.getFloat("speed_inward", 2400f)
                   set(v) = prefs.edit().putFloat("speed_inward", v).apply()
 
               var outwardDamping: Float
-                  get() = prefs.getFloat("speed_outward_zeta", 0.74f)
+                  get() = prefs.getFloat("speed_outward_zeta", 0.88f)
                   set(v) = prefs.edit().putFloat("speed_outward_zeta", v).apply()
 
               var isLeftEdge: Boolean
                   get() = prefs.getBoolean("is_left_side", false)
                   set(v) = prefs.edit().putBoolean("is_left_side", v).apply()
-
-              @Synchronized
-              fun getKeyForCodeFast(keyCode: Int): KeyItem? {
-                  if (cachedKeyMap == null) loadKeys()
-                  return cachedKeyMap?.get(keyCode)
-              }
-
-              @Synchronized
-              fun loadKeys(): MutableList<KeyItem> {
-                  val raw = prefs.getString("custom_keys_json", null)
-                  val list = mutableListOf<KeyItem>()
-                  if (raw.isNullOrEmpty()) {
-                      list.add(KeyItem("vol_up", "Volume Up", 24, 0.22f, false))
-                      list.add(KeyItem("vol_down", "Volume Down", 25, 0.32f, false))
-                      list.add(KeyItem("power_btn", "Power Button", 26, 0.18f, false))
-                      saveKeys(list)
-                      return list
-                  }
-                  try {
-                      val arr = JSONArray(raw)
-                      val sparse = SparseArray<KeyItem>()
-                      for (i in 0 until arr.length()) {
-                          val obj = arr.getJSONObject(i)
-                          val item = KeyItem(
-                              obj.getString("id"),
-                              obj.getString("name"),
-                              obj.getInt("keyCode"),
-                              obj.getDouble("ratio").toFloat(),
-                              obj.getBoolean("isLeftEdge")
-                          )
-                          list.add(item)
-                          sparse.put(item.keyCode, item)
-                      }
-                      cachedKeyMap = sparse
-                  } catch (e: Exception) {
-                      e.printStackTrace()
-                  }
-                  return list
-              }
-
-              @Synchronized
-              fun saveKeys(keys: List<KeyItem>) {
-                  val arr = JSONArray()
-                  val sparse = SparseArray<KeyItem>()
-                  for (k in keys) {
-                      val obj = JSONObject().apply {
-                          put("id", k.id)
-                          put("name", k.name)
-                          put("keyCode", k.keyCode)
-                          put("ratio", k.ratio.toDouble())
-                          put("isLeftEdge", k.isLeftEdge)
-                      }
-                      arr.put(obj)
-                      sparse.put(k.keyCode, k)
-                  }
-                  cachedKeyMap = sparse
-                  prefs.edit().putString("custom_keys_json", arr.toString()).apply()
-              }
           }
           EOF
 
-          # 9. Low-Latency Surface Engine with Pure Additive Screen Glow
+          # 9. Low-Latency Surface Overlay View
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
           import android.content.Context
           import android.graphics.*
           import android.os.Build
+          import android.os.SystemClock
           import android.os.VibrationEffect
           import android.os.Vibrator
           import android.util.AttributeSet
@@ -329,15 +280,15 @@ jobs:
           ) : View(context, attrs), Choreographer.FrameCallback {
 
               var isLeftEdge: Boolean = false
-              var centerY: Float = 600f
+              var centerY: Float = 0f
 
-              var y0: Float = 50f
-              var w: Float = 85f
-              var A: Float = 54f
+              var y0: Float = 28f
+              var w: Float = 38f
+              var A: Float = 16f
 
-              var omegaN: Float = 44.0f
-              var inwardVelocity: Float = 2100f
-              var zeta: Float = 0.74f
+              var omegaN: Float = 68.0f
+              var inwardVelocity: Float = 2400f
+              var zeta: Float = 0.88f
 
               private var currentA: Float = 0f
               private var velocityA: Float = 0f
@@ -345,35 +296,44 @@ jobs:
               private var isSimulating: Boolean = false
               private var lastFrameTimeNs: Long = 0L
 
+              private var downTimestampMs: Long = 0L
+              private var isReleasePending: Boolean = false
+              private val minHoldDurationMs: Long = 48L
+
               private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
               private val choreographer = Choreographer.getInstance()
 
               private val morphPath = Path()
-              private val glowPath = Path()
-
-              private val solidBlackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+              private val bezelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
                   style = Paint.Style.FILL
               }
 
-              // Additive Screen mode: Completely zero extra luminance on bright/colored pixels,
-              // only emits visible luminance on #000000 pure OLED black.
-              private val magicalGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  style = Paint.Style.FILL
-                  xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
-                  maskFilter = BlurMaskFilter(18f, BlurMaskFilter.Blur.NORMAL)
+              init {
+                  setLayerType(LAYER_TYPE_HARDWARE, null)
               }
 
               fun onHardwareButtonDown() {
+                  downTimestampMs = SystemClock.uptimeMillis()
+                  isReleasePending = false
                   targetA = A
-                  velocityA += inwardVelocity
+                  if (currentA < 1.0f) {
+                      currentA = A * 0.45f
+                  }
+                  velocityA = inwardVelocity
                   triggerHaptic()
                   startSimulation()
+                  invalidate()
               }
 
               fun onHardwareButtonUp() {
-                  targetA = 0f
-                  startSimulation()
+                  val elapsed = SystemClock.uptimeMillis() - downTimestampMs
+                  if (elapsed < minHoldDurationMs) {
+                      isReleasePending = true
+                  } else {
+                      targetA = 0f
+                      startSimulation()
+                  }
               }
 
               fun setPreviewStatic(ratio: Float) {
@@ -398,10 +358,16 @@ jobs:
               override fun doFrame(frameTimeNs: Long) {
                   if (!isSimulating) return
 
+                  val now = SystemClock.uptimeMillis()
+                  if (isReleasePending && (now - downTimestampMs >= minHoldDurationMs)) {
+                      isReleasePending = false
+                      targetA = 0f
+                  }
+
                   val dt = if (lastFrameTimeNs > 0L) {
-                      ((frameTimeNs - lastFrameTimeNs) / 1_000_000_000f).coerceIn(0.001f, 0.016f)
+                      ((frameTimeNs - lastFrameTimeNs) / 1_000_000_000f).coerceIn(0.002f, 0.020f)
                   } else {
-                      0.003f
+                      0.008f
                   }
                   lastFrameTimeNs = frameTimeNs
 
@@ -411,7 +377,7 @@ jobs:
                   velocityA += accel * dt
                   currentA += velocityA * dt
 
-                  if (targetA == 0f && abs(velocityA) < 0.15f && abs(currentA) < 0.15f) {
+                  if (targetA == 0f && !isReleasePending && abs(velocityA) < 0.2f && abs(currentA) < 0.2f) {
                       currentA = 0f
                       velocityA = 0f
                       isSimulating = false
@@ -426,189 +392,88 @@ jobs:
               private fun triggerHaptic() {
                   try {
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                          vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+                          vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
                       } else {
                           @Suppress("DEPRECATION")
-                          vibrator?.vibrate(5)
+                          vibrator?.vibrate(4)
                       }
                   } catch (ignored: Exception) {}
               }
 
               override fun onDraw(canvas: Canvas) {
                   super.onDraw(canvas)
-                  if (currentA <= 0.001f) return
+                  if (currentA <= 0.01f) return
 
-                  val screenW = width.toFloat()
                   val totalHalfSpan = y0 + w
                   val yTop = centerY - totalHalfSpan
                   val yBottom = centerY + totalHalfSpan
 
-                  morphPath.reset()
-                  glowPath.reset()
-
-                  val steps = 60
+                  morphPath.rewind()
+                  val steps = 36
                   val stepSize = (2f * totalHalfSpan) / steps
-                  val invW = 1.0f / w
-                  val glowExpansion = 12f * (currentA / A).coerceIn(0f, 1f)
 
                   if (isLeftEdge) {
                       morphPath.moveTo(0f, yTop)
-                      glowPath.moveTo(0f, yTop - glowExpansion)
-
                       for (i in 0..steps) {
                           val curY = yTop + (i * stepSize)
                           val dist = abs(curY - centerY)
                           val x = when {
                               dist <= y0 -> currentA
                               dist < totalHalfSpan -> {
-                                  val u = (dist - y0) * invW
-                                  val u2 = u * u
-                                  val u3 = u2 * u
-                                  val poly = 1.0f - (u3 * (10.0f - (15.0f * u) + (6.0f * u2)))
-                                  currentA * poly
+                                  val u = (dist - y0) / w
+                                  currentA * (1.0f - (10.0f * u.pow(3)) + (15.0f * u.pow(4)) - (6.0f * u.pow(5)))
                               }
                               else -> 0f
                           }
                           morphPath.lineTo(x, curY)
-                          glowPath.lineTo(x + glowExpansion, curY)
                       }
                       morphPath.lineTo(0f, yBottom)
                       morphPath.close()
-
-                      glowPath.lineTo(0f, yBottom + glowExpansion)
-                      glowPath.close()
-
-                      magicalGlowPaint.shader = LinearGradient(
-                          0f, yTop, currentA + glowExpansion, centerY,
-                          intArrayOf(0x00FFFFFF, 0x4DFFFFFF, 0x00FFFFFF),
-                          floatArrayOf(0.0f, 0.5f, 1.0f),
-                          Shader.TileMode.CLAMP
-                      )
-                      canvas.drawPath(glowPath, magicalGlowPaint)
-                      canvas.drawPath(morphPath, solidBlackPaint)
-
                   } else {
-                      val xEdge = screenW
+                      val xEdge = width.toFloat()
                       morphPath.moveTo(xEdge, yTop)
-                      glowPath.moveTo(xEdge, yTop - glowExpansion)
-
                       for (i in 0..steps) {
                           val curY = yTop + (i * stepSize)
                           val dist = abs(curY - centerY)
                           val x = when {
                               dist <= y0 -> currentA
                               dist < totalHalfSpan -> {
-                                  val u = (dist - y0) * invW
-                                  val u2 = u * u
-                                  val u3 = u2 * u
-                                  val poly = 1.0f - (u3 * (10.0f - (15.0f * u) + (6.0f * u2)))
-                                  currentA * poly
+                                  val u = (dist - y0) / w
+                                  currentA * (1.0f - (10.0f * u.pow(3)) + (15.0f * u.pow(4)) - (6.0f * u.pow(5)))
                               }
                               else -> 0f
                           }
                           morphPath.lineTo(xEdge - x, curY)
-                          glowPath.lineTo(xEdge - (x + glowExpansion), curY)
                       }
                       morphPath.lineTo(xEdge, yBottom)
                       morphPath.close()
-
-                      glowPath.lineTo(xEdge, yBottom + glowExpansion)
-                      glowPath.close()
-
-                      magicalGlowPaint.shader = LinearGradient(
-                          xEdge, yTop, xEdge - (currentA + glowExpansion), centerY,
-                          intArrayOf(0x00FFFFFF, 0x4DFFFFFF, 0x00FFFFFF),
-                          floatArrayOf(0.0f, 0.5f, 1.0f),
-                          Shader.TileMode.CLAMP
-                      )
-                      canvas.drawPath(glowPath, magicalGlowPaint)
-                      canvas.drawPath(morphPath, solidBlackPaint)
                   }
+
+                  canvas.drawPath(morphPath, bezelPaint)
               }
           }
           EOF
 
-          # 10. Hardware Service with Guaranteed Power Button Interception
+          # 10. Hardware Key Accessibility Service
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
           import android.accessibilityservice.AccessibilityService
-          import android.app.Notification
-          import android.app.NotificationChannel
-          import android.app.NotificationManager
-          import android.content.BroadcastReceiver
-          import android.content.Context
-          import android.content.Intent
-          import android.content.IntentFilter
           import android.graphics.PixelFormat
           import android.os.Build
           import android.view.*
           import android.view.accessibility.AccessibilityEvent
-          import androidx.core.app.NotificationCompat
 
           class HardwareKeyMonitorService : AccessibilityService() {
-              companion object {
-                  var instance: HardwareKeyMonitorService? = null
-              }
-
               private var wm: WindowManager? = null
               private var overlay: BezelSurfaceView? = null
-              lateinit var store: MorphConfigStore
+              private lateinit var store: MorphConfigStore
               private var activeKey: Int = 0
-
-              // Power Button System Trigger
-              private val powerTriggerReceiver = object : BroadcastReceiver() {
-                  override fun onReceive(context: Context?, intent: Intent?) {
-                      when (intent?.action) {
-                          Intent.ACTION_SCREEN_OFF, Intent.ACTION_SCREEN_ON -> {
-                              triggerHardwareKeyAction(KeyEvent.KEYCODE_POWER)
-                          }
-                      }
-                  }
-              }
 
               override fun onServiceConnected() {
                   super.onServiceConnected()
-                  instance = this
                   store = MorphConfigStore(this)
-                  store.loadKeys()
-                  startPersistentForeground()
                   attachOverlay()
-
-                  val filter = IntentFilter().apply {
-                      addAction(Intent.ACTION_SCREEN_OFF)
-                      addAction(Intent.ACTION_SCREEN_ON)
-                  }
-                  registerReceiver(powerTriggerReceiver, filter)
-              }
-
-              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-                  return START_STICKY
-              }
-
-              private fun startPersistentForeground() {
-                  val channelId = "bezel_channel_core"
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      val channel = NotificationChannel(
-                          channelId,
-                          "Morph Service",
-                          NotificationManager.IMPORTANCE_MIN
-                      ).apply {
-                          setShowBadge(false)
-                          enableVibration(false)
-                      }
-                      getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
-                  }
-
-                  val notification: Notification = NotificationCompat.Builder(this, channelId)
-                      .setContentTitle("Perimeter Engine Active")
-                      .setContentText("Listening to hardware switches")
-                      .setSmallIcon(android.R.drawable.ic_menu_crop)
-                      .setPriority(NotificationCompat.PRIORITY_MIN)
-                      .setOngoing(true)
-                      .build()
-
-                  startForeground(1001, notification)
               }
 
               private fun attachOverlay() {
@@ -650,26 +515,23 @@ jobs:
 
               override fun onKeyEvent(event: KeyEvent): Boolean {
                   val code = event.keyCode
+                  if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                      val ratio = if (code == KeyEvent.KEYCODE_VOLUME_UP) store.volumeUpRatio else store.volumeDownRatio
 
-                  if (store.isListeningForKey && event.action == KeyEvent.ACTION_DOWN) {
-                      store.onKeyDetectedCallback?.invoke(code)
-                      return true
-                  }
-
-                  val matched = store.getKeyForCodeFast(code)
-                  if (matched != null) {
                       if (event.action == KeyEvent.ACTION_DOWN) {
-                          activeKey = code
-                          overlay?.let { view ->
-                              view.isLeftEdge = matched.isLeftEdge
-                              view.y0 = store.flatTopHalfLengthY0
-                              view.w = store.blendTransitionW
-                              view.A = store.peakAmplitudeA
-                              view.omegaN = store.speedOverall
-                              view.inwardVelocity = store.inwardImpulse
-                              view.zeta = store.outwardDamping
-                              view.centerY = view.height * matched.ratio
-                              view.onHardwareButtonDown()
+                          if (event.repeatCount == 0) {
+                              activeKey = code
+                              overlay?.let { view ->
+                                  view.isLeftEdge = store.isLeftEdge
+                                  view.y0 = store.flatTopHalfLengthY0
+                                  view.w = store.blendTransitionW
+                                  view.A = store.peakAmplitudeA
+                                  view.omegaN = store.speedOverall
+                                  view.inwardVelocity = store.inwardImpulse
+                                  view.zeta = store.outwardDamping
+                                  view.centerY = (if (view.height > 0) view.height else resources.displayMetrics.heightPixels) * ratio
+                                  view.onHardwareButtonDown()
+                              }
                           }
                       } else if (event.action == KeyEvent.ACTION_UP) {
                           if (activeKey == code) {
@@ -681,269 +543,70 @@ jobs:
                   return false
               }
 
-              private fun triggerHardwareKeyAction(code: Int) {
-                  val matched = store.getKeyForCodeFast(code) ?: return
-                  overlay?.let { view ->
-                      view.isLeftEdge = matched.isLeftEdge
-                      view.y0 = store.flatTopHalfLengthY0
-                      view.w = store.blendTransitionW
-                      view.A = store.peakAmplitudeA
-                      view.centerY = view.height * matched.ratio
-                      view.onHardwareButtonDown()
-                      view.postDelayed({ view.onHardwareButtonUp() }, 90)
-                  }
-              }
-
               override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
               override fun onInterrupt() {}
 
               override fun onDestroy() {
                   super.onDestroy()
-                  try {
-                      unregisterReceiver(powerTriggerReceiver)
-                      overlay?.let { wm?.removeView(it) }
-                  } catch (ignored: Exception) {}
+                  try { overlay?.let { wm?.removeView(it) } } catch (ignored: Exception) {}
               }
           }
           EOF
 
-          # 11. Mandatory Setup Gatekeeper & Live HUD
+          # 11. Production MainActivity with Strict Permission Gate & Pro UI
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
           import android.accessibilityservice.AccessibilityServiceInfo
           import android.content.Context
           import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
-          import android.os.PowerManager
           import android.provider.Settings
           import android.view.Gravity
-          import android.view.KeyEvent
-          import android.view.MotionEvent
           import android.view.View
           import android.view.accessibility.AccessibilityManager
           import android.widget.*
-          import androidx.appcompat.app.AlertDialog
           import androidx.appcompat.app.AppCompatActivity
-          import java.util.UUID
+          import androidx.core.content.ContextCompat
 
           class MainActivity : AppCompatActivity() {
-              private lateinit var store: MorphConfigStore
-              private lateinit var fullScreenPreview: BezelSurfaceView
-              private lateinit var keysContainer: LinearLayout
-              private var keyList = mutableListOf<KeyItem>()
 
+              private lateinit var store: MorphConfigStore
               private lateinit var rootContainer: FrameLayout
               private lateinit var permissionGateLayout: LinearLayout
-              private lateinit var mainHudLayout: ScrollView
+              private lateinit var dashboardLayout: FrameLayout
+
+              private lateinit var accessibilityStatusIcon: ImageView
+              private lateinit var overlayStatusIcon: ImageView
+              private lateinit var proceedButton: Button
+
+              private lateinit var preview: BezelSurfaceView
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   store = MorphConfigStore(this)
-                  keyList = store.loadKeys()
 
-                  rootContainer = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
-
-                  // Live background preview
-                  fullScreenPreview = BezelSurfaceView(this).apply {
-                      isLeftEdge = store.isLeftEdge
-                      y0 = store.flatTopHalfLengthY0
-                      w = store.blendTransitionW
-                      A = store.peakAmplitudeA
-                      omegaN = store.speedOverall
-                      inwardVelocity = store.inwardImpulse
-                      zeta = store.outwardDamping
+                  rootContainer = FrameLayout(this).apply {
+                      setBackgroundColor(0xFF0F172A.toInt())
                   }
-                  rootContainer.addView(fullScreenPreview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
 
-                  permissionGateLayout = createPermissionGateScreen()
-                  mainHudLayout = createMainHudScreen()
-
-                  rootContainer.addView(permissionGateLayout, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-                  rootContainer.addView(mainHudLayout, FrameLayout.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.58).toInt().apply {
-                  }).also {
-                      (mainHudLayout.layoutParams as FrameLayout.LayoutParams).gravity = Gravity.BOTTOM
-                      (mainHudLayout.layoutParams as FrameLayout.LayoutParams).setMargins(20, 0, 20, 40)
-                  }
+                  buildPermissionGate()
+                  buildDashboard()
 
                   setContentView(rootContainer)
-                  checkPermissionsState()
               }
 
               override fun onResume() {
                   super.onResume()
-                  checkPermissionsState()
-                  syncAndPreview()
+                  refreshPermissionsAndFlow()
               }
 
-              private fun checkPermissionsState() {
-                  val hasAccessibility = isAccessibilityEnabled()
-                  val hasOverlay = Settings.canDrawOverlays(this)
-
-                  if (hasAccessibility && hasOverlay) {
-                      permissionGateLayout.visibility = View.GONE
-                      mainHudLayout.visibility = View.VISIBLE
-                  } else {
-                      permissionGateLayout.visibility = View.VISIBLE
-                      mainHudLayout.visibility = View.GONE
-                  }
-              }
-
-              private fun createPermissionGateScreen(): LinearLayout {
-                  return LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setBackgroundColor(0xFF0D0D0D.toInt())
-                      gravity = Gravity.CENTER
-                      setPadding(48, 48, 48, 48)
-
-                      val icon = ImageView(context).apply {
-                          setImageResource(android.R.drawable.ic_dialog_alert)
-                          setColorFilter(0xFF5389FF.toInt())
-                          layoutParams = LinearLayout.LayoutParams(160, 160).apply { bottomMargin = 32 }
-                      }
-                      addView(icon)
-
-                      val title = TextView(context).apply {
-                          text = "Required Setup"
-                          setTextColor(0xFFFFFFFF.toInt())
-                          textSize = 22f
-                          gravity = Gravity.CENTER
-                          setPadding(0, 0, 0, 16)
-                      }
-                      addView(title)
-
-                      val desc = TextView(context).apply {
-                          text = "Bezel Morph requires both Accessibility and Display Overlay permissions to run at native 0 ms speed.\n\nYou cannot proceed into the app until both are enabled."
-                          setTextColor(0xFFCCCCCC.toInt())
-                          textSize = 14f
-                          gravity = Gravity.CENTER
-                          setPadding(0, 0, 0, 48)
-                      }
-                      addView(desc)
-
-                      val btnOverlay = Button(context).apply {
-                          text = "1. Enable 'Display Over Other Apps'"
-                          setBackgroundColor(0xFF2E66FF.toInt())
-                          setTextColor(0xFFFFFFFF.toInt())
-                          setOnClickListener {
-                              startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                          }
-                          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 20 }
-                      }
-                      addView(btnOverlay)
-
-                      val btnAccess = Button(context).apply {
-                          text = "2. Enable 'Accessibility Service'"
-                          setBackgroundColor(0xFF2E66FF.toInt())
-                          setTextColor(0xFFFFFFFF.toInt())
-                          setOnClickListener {
-                              startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                          }
-                          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 20 }
-                      }
-                      addView(btnAccess)
-
-                      // Battery Optimization Intent
-                      val btnBattery = Button(context).apply {
-                          text = "3. Disable Battery Restrictions"
-                          setBackgroundColor(0xFF1E1E1E.toInt())
-                          setTextColor(0xFFFFFFFF.toInt())
-                          setOnClickListener {
-                              try {
-                                  val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                      data = Uri.parse("package:$packageName")
-                                  }
-                                  startActivity(intent)
-                              } catch (e: Exception) {
-                                  startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                              }
-                          }
-                          layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                      }
-                      addView(btnBattery)
-                  }
-              }
-
-              private fun createMainHudScreen(): ScrollView {
-                  val hudScroll = ScrollView(this).apply {
-                      setBackgroundColor(0xD9101010.toInt())
-                      setPadding(32, 28, 32, 32)
-                  }
-                  val hudContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-                  val title = TextView(this).apply {
-                      text = "Full-Screen Live Calibration"
-                      setTextColor(0xFFFFFFFF.toInt())
-                      textSize = 19f
-                      setPadding(0, 0, 0, 16)
-                  }
-                  hudContent.addView(title)
-
-                  hudContent.addView(buildTouchLockedSlider("Flat Key Plateau (y0)", store.flatTopHalfLengthY0.toInt(), 20, 140) {
-                      store.flatTopHalfLengthY0 = it.toFloat()
-                      syncAndPreview()
-                  })
-
-                  hudContent.addView(buildTouchLockedSlider("Shoulder Blend Width (w)", store.blendTransitionW.toInt(), 30, 200) {
-                      store.blendTransitionW = it.toFloat()
-                      syncAndPreview()
-                  })
-
-                  hudContent.addView(buildTouchLockedSlider("Peak Intrusion (A)", store.peakAmplitudeA.toInt(), 15, 120) {
-                      store.peakAmplitudeA = it.toFloat()
-                      syncAndPreview()
-                  })
-
-                  val physicsHeader = TextView(this).apply {
-                      text = "Speed & Kinetics"
-                      setTextColor(0xFF5389FF.toInt())
-                      textSize = 15f
-                      setPadding(0, 16, 0, 8)
-                  }
-                  hudContent.addView(physicsHeader)
-
-                  hudContent.addView(buildTouchLockedSlider("Frequency (Total Speed)", store.speedOverall.toInt(), 15, 60) {
-                      store.speedOverall = it.toFloat()
-                      fullScreenPreview.omegaN = store.speedOverall
-                  })
-
-                  hudContent.addView(buildTouchLockedSlider("Inward Impulse Velocity", (store.inwardImpulse / 10).toInt(), 50, 250) {
-                      store.inwardImpulse = (it * 10).toFloat()
-                      fullScreenPreview.inwardVelocity = store.inwardImpulse
-                  })
-
-                  hudContent.addView(buildTouchLockedSlider("Outward Recoil Damping", (store.outwardDamping * 100).toInt(), 50, 98) {
-                      store.outwardDamping = it / 100f
-                      fullScreenPreview.zeta = store.outwardDamping
-                  })
-
-                  val keysHeader = TextView(this).apply {
-                      text = "Hardware Key Placement"
-                      setTextColor(0xFF5389FF.toInt())
-                      textSize = 15f
-                      setPadding(0, 16, 0, 8)
-                  }
-                  hudContent.addView(keysHeader)
-
-                  keysContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-                  hudContent.addView(keysContainer)
-                  renderKeyList()
-
-                  val btnAddKey = Button(this).apply {
-                      text = "+ Detect & Add Any Physical Key"
-                      setBackgroundColor(0xFF1B5E20.toInt())
-                      setTextColor(0xFFFFFFFF.toInt())
-                      setOnClickListener { startKeyListeningDialog() }
-                  }
-                  hudContent.addView(btnAddKey)
-
-                  hudScroll.addView(hudContent)
-                  return hudScroll
-              }
-
-              private fun isAccessibilityEnabled(): Boolean {
+              private fun hasAccessibilityPermission(): Boolean {
                   val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
                   val services = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
                   for (s in services) {
@@ -952,177 +615,307 @@ jobs:
                   return false
               }
 
-              private fun renderKeyList() {
-                  keysContainer.removeAllViews()
-                  for (key in keyList) {
-                      val row = LinearLayout(this).apply {
-                          orientation = LinearLayout.VERTICAL
-                          setPadding(16, 16, 16, 16)
-                          setBackgroundColor(0xFF1B1B1B.toInt())
-                          val lp = LinearLayout.LayoutParams(
-                              LinearLayout.LayoutParams.MATCH_PARENT,
-                              LinearLayout.LayoutParams.WRAP_CONTENT
-                          ).apply { setMargins(0, 8, 0, 8) }
-                          layoutParams = lp
-                      }
-
-                      val topRow = LinearLayout(this).apply {
-                          orientation = LinearLayout.HORIZONTAL
-                          gravity = Gravity.CENTER_VERTICAL
-                      }
-
-                      val nameTxt = TextView(this).apply {
-                          text = "${key.name} (Key: ${key.keyCode})"
-                          setTextColor(0xFFFFFFFF.toInt())
-                          textSize = 14f
-                          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                      }
-                      topRow.addView(nameTxt)
-
-                      val btnRename = Button(this).apply {
-                          text = "Rename"
-                          textSize = 11f
-                          setOnClickListener { showRenameDialog(key) }
-                      }
-                      topRow.addView(btnRename)
-
-                      val btnDelete = Button(this).apply {
-                          text = "Delete"
-                          textSize = 11f
-                          setTextColor(0xFFFF5252.toInt())
-                          setOnClickListener {
-                              keyList.remove(key)
-                              store.saveKeys(keyList)
-                              renderKeyList()
-                          }
-                      }
-                      topRow.addView(btnDelete)
-                      row.addView(topRow)
-
-                      val sideToggle = Switch(this).apply {
-                          text = if (key.isLeftEdge) "Edge: Left" else "Edge: Right"
-                          setTextColor(0xFFBBBBBB.toInt())
-                          isChecked = key.isLeftEdge
-                          setOnCheckedChangeListener { _, c ->
-                              key.isLeftEdge = c
-                              text = if (c) "Edge: Left" else "Edge: Right"
-                              store.saveKeys(keyList)
-                              fullScreenPreview.isLeftEdge = c
-                              fullScreenPreview.centerY = fullScreenPreview.height * key.ratio
-                              fullScreenPreview.setPreviewStatic(1.0f)
-                          }
-                      }
-                      row.addView(sideToggle)
-
-                      row.addView(buildTouchLockedSlider("Position (${key.name})", (key.ratio * 1000).toInt(), 50, 950) { p ->
-                          key.ratio = p / 1000f
-                          store.saveKeys(keyList)
-                          fullScreenPreview.isLeftEdge = key.isLeftEdge
-                          fullScreenPreview.centerY = fullScreenPreview.height * key.ratio
-                          fullScreenPreview.setPreviewStatic(1.0f)
-                      })
-
-                      keysContainer.addView(row)
+              private fun hasOverlayPermission(): Boolean {
+                  return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      Settings.canDrawOverlays(this)
+                  } else {
+                      true
                   }
               }
 
-              private fun startKeyListeningDialog() {
-                  val service = HardwareKeyMonitorService.instance
-                  val targetStore = service?.store ?: store
+              private fun refreshPermissionsAndFlow() {
+                  val accessOk = hasAccessibilityPermission()
+                  val overlayOk = hasOverlayPermission()
 
-                  val progressDialog = AlertDialog.Builder(this)
-                      .setTitle("Listening for Physical Key...")
-                      .setMessage("Press ANY physical hardware button now.")
-                      .setNegativeButton("Cancel") { _, _ ->
-                          targetStore.isListeningForKey = false
-                          targetStore.onKeyDetectedCallback = null
-                      }
-                      .setCancelable(false)
-                      .create()
+                  accessibilityStatusIcon.setImageResource(
+                      if (accessOk) R.drawable.ic_check_circle else R.drawable.ic_chevron_right
+                  )
+                  overlayStatusIcon.setImageResource(
+                      if (overlayOk) R.drawable.ic_check_circle else R.drawable.ic_chevron_right
+                  )
 
-                  targetStore.isListeningForKey = true
-                  targetStore.onKeyDetectedCallback = { detectedCode ->
-                      runOnUiThread {
-                          targetStore.isListeningForKey = false
-                          progressDialog.dismiss()
-                          promptSaveKey(detectedCode)
-                      }
+                  if (accessOk && overlayOk) {
+                      permissionGateLayout.visibility = View.GONE
+                      dashboardLayout.visibility = View.VISIBLE
+                      updatePreview()
+                  } else {
+                      permissionGateLayout.visibility = View.VISIBLE
+                      dashboardLayout.visibility = View.GONE
+                      proceedButton.visibility = View.GONE
+                  }
+              }
+
+              private fun buildPermissionGate() {
+                  permissionGateLayout = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(48, 80, 48, 48)
+                      gravity = Gravity.CENTER_HORIZONTAL
                   }
 
-                  progressDialog.show()
-              }
-
-              private fun promptSaveKey(code: Int) {
-                  val inputName = EditText(this).apply {
-                      setText(when (code) {
-                          KeyEvent.KEYCODE_POWER -> "Power Button"
-                          KeyEvent.KEYCODE_VOLUME_UP -> "Volume Up"
-                          KeyEvent.KEYCODE_VOLUME_DOWN -> "Volume Down"
-                          KeyEvent.KEYCODE_CAMERA -> "Camera Shutter"
-                          else -> "Button (Code $code)"
-                      })
+                  val title = TextView(this).apply {
+                      text = "System Initialization"
+                      setTextColor(Color.WHITE)
+                      textSize = 24f
+                      typeface = Typeface.DEFAULT_BOLD
+                      gravity = Gravity.CENTER
                   }
-                  AlertDialog.Builder(this)
-                      .setTitle("Physical Key Detected!")
-                      .setMessage("Detected KeyCode: $code. Enter a label for this button:")
-                      .setView(inputName)
-                      .setPositiveButton("Save") { _, _ ->
-                          val label = inputName.text.toString().ifEmpty { "Button $code" }
-                          val newItem = KeyItem(UUID.randomUUID().toString(), label, code, 0.45f, false)
-                          keyList.add(newItem)
-                          store.saveKeys(keyList)
-                          renderKeyList()
+                  permissionGateLayout.addView(title)
+
+                  val subtitle = TextView(this).apply {
+                      text = "Grant required Android perimeter permissions to unlock the hardware sync engine."
+                      setTextColor(0xFF94A3B8.toInt())
+                      textSize = 14f
+                      gravity = Gravity.CENTER
+                      setPadding(0, 16, 0, 48)
+                  }
+                  permissionGateLayout.addView(subtitle)
+
+                  val cardAccessibility = createPermissionCard(
+                      iconRes = R.drawable.ic_accessibility,
+                      titleText = "Accessibility Interceptor",
+                      descText = "Captures hardware key events with zero interrupt delay"
+                  ) {
+                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                  }
+                  accessibilityStatusIcon = cardAccessibility.second
+                  permissionGateLayout.addView(cardAccessibility.first)
+
+                  val cardOverlay = createPermissionCard(
+                      iconRes = R.drawable.ic_overlay,
+                      titleText = "Hardware Perimeter Overlay",
+                      descText = "Renders morph curvature directly across screen boundaries"
+                  ) {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                          val intent = Intent(
+                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                              Uri.parse("package:$packageName")
+                          )
+                          startActivity(intent)
                       }
-                      .setNegativeButton("Cancel", null)
-                      .show()
+                  }
+                  overlayStatusIcon = cardOverlay.second
+                  permissionGateLayout.addView(cardOverlay.first)
+
+                  proceedButton = Button(this).apply {
+                      text = "Access Dashboard"
+                      setTextColor(Color.WHITE)
+                      textSize = 15f
+                      typeface = Typeface.DEFAULT_BOLD
+                      visibility = View.GONE
+                      background = GradientDrawable().apply {
+                          cornerRadius = 24f
+                          setColor(0xFF2563EB.toInt())
+                      }
+                      setOnClickListener { refreshPermissionsAndFlow() }
+                  }
+                  val btnParams = LinearLayout.LayoutParams(
+                      LinearLayout.LayoutParams.MATCH_PARENT,
+                      130
+                  ).apply { setMargins(0, 48, 0, 0) }
+                  permissionGateLayout.addView(proceedButton, btnParams)
+
+                  rootContainer.addView(permissionGateLayout, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
               }
 
-              private fun showRenameDialog(key: KeyItem) {
-                  val input = EditText(this).apply { setText(key.name) }
-                  AlertDialog.Builder(this)
-                      .setTitle("Rename Button")
-                      .setView(input)
-                      .setPositiveButton("Save") { _, _ ->
-                          key.name = input.text.toString()
-                          store.saveKeys(keyList)
-                          renderKeyList()
+              private fun createPermissionCard(
+                  iconRes: Int,
+                  titleText: String,
+                  descText: String,
+                  onClick: () -> Unit
+              ): Pair<LinearLayout, ImageView> {
+                  val card = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(32, 28, 32, 28)
+                      background = GradientDrawable().apply {
+                          setColor(0xFF1E293B.toInt())
+                          cornerRadius = 20f
                       }
-                      .setNegativeButton("Cancel", null)
-                      .show()
+                      isClickable = true
+                      isFocusable = true
+                      setOnClickListener { onClick() }
+                  }
+                  val params = LinearLayout.LayoutParams(
+                      LinearLayout.LayoutParams.MATCH_PARENT,
+                      LinearLayout.LayoutParams.WRAP_CONTENT
+                  ).apply { setMargins(0, 0, 0, 24) }
+                  card.layoutParams = params
+
+                  val icon = ImageView(this).apply {
+                      setImageResource(iconRes)
+                      layoutParams = LinearLayout.LayoutParams(64, 64)
+                  }
+                  card.addView(icon)
+
+                  val textContainer = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(28, 0, 24, 0)
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)
+                  }
+                  val t = TextView(this).apply {
+                      text = titleText
+                      setTextColor(Color.WHITE)
+                      textSize = 15f
+                      typeface = Typeface.DEFAULT_BOLD
+                  }
+                  val d = TextView(this).apply {
+                      text = descText
+                      setTextColor(0xFF94A3B8.toInt())
+                      textSize = 12f
+                      setPadding(0, 6, 0, 0)
+                  }
+                  textContainer.addView(t)
+                  textContainer.addView(d)
+                  card.addView(textContainer)
+
+                  val status = ImageView(this).apply {
+                      setImageResource(R.drawable.ic_chevron_right)
+                      layoutParams = LinearLayout.LayoutParams(48, 48)
+                  }
+                  card.addView(status)
+
+                  return Pair(card, status)
               }
 
-              private fun buildTouchLockedSlider(name: String, current: Int, min: Int, max: Int, onVal: (Int) -> Unit): LinearLayout {
+              private fun buildDashboard() {
+                  dashboardLayout = FrameLayout(this).apply {
+                      visibility = View.GONE
+                  }
+
+                  preview = BezelSurfaceView(this).apply {
+                      isLeftEdge = store.isLeftEdge
+                      y0 = store.flatTopHalfLengthY0
+                      w = store.blendTransitionW
+                      A = store.peakAmplitudeA
+                      omegaN = store.speedOverall
+                      inwardVelocity = store.inwardImpulse
+                      zeta = store.outwardDamping
+                  }
+                  dashboardLayout.addView(preview, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+
+                  val scroll = ScrollView(this).apply {
+                      background = GradientDrawable().apply {
+                          setColor(0xFA0F172A.toInt())
+                          cornerRadii = floatArrayOf(40f, 40f, 40f, 40f, 0f, 0f, 0f, 0f)
+                      }
+                      setPadding(36, 32, 36, 40)
+                  }
+                  val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+                  val dashTitle = TextView(this).apply {
+                      text = "Physical Edge Calibrator"
+                      setTextColor(Color.WHITE)
+                      textSize = 18f
+                      typeface = Typeface.DEFAULT_BOLD
+                      setPadding(0, 0, 0, 8)
+                  }
+                  content.addView(dashTitle)
+
+                  val dashSub = TextView(this).apply {
+                      text = "Adjust curves to perfectly align with your physical hardware volume keys."
+                      setTextColor(0xFF94A3B8.toInt())
+                      textSize = 12f
+                      setPadding(0, 0, 0, 20)
+                  }
+                  content.addView(dashSub)
+
+                  val edgeSwitch = Switch(this).apply {
+                      text = if (store.isLeftEdge) "Perimeter: Left Chassis Edge" else "Perimeter: Right Chassis Edge"
+                      setTextColor(Color.WHITE)
+                      isChecked = store.isLeftEdge
+                      setOnCheckedChangeListener { _, checked ->
+                          store.isLeftEdge = checked
+                          text = if (checked) "Perimeter: Left Chassis Edge" else "Perimeter: Right Chassis Edge"
+                          updatePreview()
+                      }
+                  }
+                  content.addView(edgeSwitch)
+
+                  content.addView(buildSlider("Volume Up Center", (store.volumeUpRatio * 1000).toInt(), 50, 950) {
+                      store.volumeUpRatio = it / 1000f
+                      preview.centerY = preview.height * store.volumeUpRatio
+                      preview.setPreviewStatic(1.0f)
+                  })
+
+                  content.addView(buildSlider("Volume Down Center", (store.volumeDownRatio * 1000).toInt(), 50, 950) {
+                      store.volumeDownRatio = it / 1000f
+                      preview.centerY = preview.height * store.volumeDownRatio
+                      preview.setPreviewStatic(1.0f)
+                  })
+
+                  content.addView(buildSlider("Key Plateau (y0)", store.flatTopHalfLengthY0.toInt(), 12, 80) {
+                      store.flatTopHalfLengthY0 = it.toFloat()
+                      updatePreview()
+                  })
+
+                  content.addView(buildSlider("Shoulder Blend (w)", store.blendTransitionW.toInt(), 15, 100) {
+                      store.blendTransitionW = it.toFloat()
+                      updatePreview()
+                  })
+
+                  content.addView(buildSlider("Hardware Peak Depth (A)", store.peakAmplitudeA.toInt(), 6, 45) {
+                      store.peakAmplitudeA = it.toFloat()
+                      updatePreview()
+                  })
+
+                  val physicsHeader = TextView(this).apply {
+                      text = "Haptic & Kinematic Response"
+                      setTextColor(0xFF38BDF8.toInt())
+                      textSize = 14f
+                      typeface = Typeface.DEFAULT_BOLD
+                      setPadding(0, 24, 0, 8)
+                  }
+                  content.addView(physicsHeader)
+
+                  content.addView(buildSlider("Zero-Delay Frequency", store.speedOverall.toInt(), 30, 95) {
+                      store.speedOverall = it.toFloat()
+                      preview.omegaN = store.speedOverall
+                  })
+
+                  content.addView(buildSlider("Initial Velocity Impulse", (store.inwardImpulse / 10).toInt(), 100, 350) {
+                      store.inwardImpulse = (it * 10).toFloat()
+                      preview.inwardVelocity = store.inwardImpulse
+                  })
+
+                  content.addView(buildSlider("Damping Ratio", (store.outwardDamping * 100).toInt(), 50, 99) {
+                      store.outwardDamping = it / 100f
+                      preview.zeta = store.outwardDamping
+                  })
+
+                  scroll.addView(content)
+                  val cardParams = FrameLayout.LayoutParams(
+                      FrameLayout.LayoutParams.MATCH_PARENT,
+                      FrameLayout.LayoutParams.WRAP_CONTENT
+                  ).apply {
+                      gravity = Gravity.BOTTOM
+                      setMargins(0, 0, 0, 0)
+                  }
+                  dashboardLayout.addView(scroll, cardParams)
+
+                  rootContainer.addView(dashboardLayout, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+              }
+
+              private fun buildSlider(name: String, current: Int, min: Int, max: Int, onVal: (Int) -> Unit): LinearLayout {
                   val box = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      setPadding(0, 6, 0, 6)
+                      setPadding(0, 10, 0, 10)
                   }
                   val txt = TextView(this).apply {
                       text = "$name: $current"
-                      setTextColor(0xFFB0B0B0.toInt())
-                      textSize = 13f
+                      setTextColor(0xFFCBD5E1.toInt())
+                      textSize = 12f
                   }
                   val bar = SeekBar(this).apply {
                       this.max = max - min
                       this.progress = current - min
-                      setOnTouchListener { v, event ->
-                          when (event.action) {
-                              MotionEvent.ACTION_DOWN -> v.parent.requestDisallowInterceptTouchEvent(true)
-                              MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.parent.requestDisallowInterceptTouchEvent(false)
-                          }
-                          false
-                      }
                       setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                           override fun onProgressChanged(b: SeekBar?, p: Int, fromUser: Boolean) {
                               val real = p + min
                               txt.text = "$name: $real"
                               onVal(real)
                           }
-                          override fun onStartTrackingTouch(b: SeekBar?) {
-                              fullScreenPreview.setPreviewStatic(1.0f)
-                          }
-                          override fun onStopTrackingTouch(b: SeekBar?) {
-                              fullScreenPreview.setPreviewStatic(0f)
-                          }
+                          override fun onStartTrackingTouch(b: SeekBar?) {}
+                          override fun onStopTrackingTouch(b: SeekBar?) { preview.setPreviewStatic(0f) }
                       })
                   }
                   box.addView(txt)
@@ -1130,19 +923,17 @@ jobs:
                   return box
               }
 
-              private fun syncAndPreview() {
-                  fullScreenPreview.isLeftEdge = store.isLeftEdge
-                  fullScreenPreview.y0 = store.flatTopHalfLengthY0
-                  fullScreenPreview.w = store.blendTransitionW
-                  fullScreenPreview.A = store.peakAmplitudeA
-                  fullScreenPreview.omegaN = store.speedOverall
-                  fullScreenPreview.inwardVelocity = store.inwardImpulse
-                  fullScreenPreview.zeta = store.outwardDamping
-                  fullScreenPreview.post {
-                      val first = keyList.firstOrNull()
-                      val ratio = first?.ratio ?: 0.22f
-                      fullScreenPreview.centerY = fullScreenPreview.height * ratio
-                      fullScreenPreview.setPreviewStatic(1.0f)
+              private fun updatePreview() {
+                  preview.isLeftEdge = store.isLeftEdge
+                  preview.y0 = store.flatTopHalfLengthY0
+                  preview.w = store.blendTransitionW
+                  preview.A = store.peakAmplitudeA
+                  preview.omegaN = store.speedOverall
+                  preview.inwardVelocity = store.inwardImpulse
+                  preview.zeta = store.outwardDamping
+                  preview.post {
+                      preview.centerY = preview.height * store.volumeUpRatio
+                      preview.setPreviewStatic(1.0f)
                   }
               }
           }
@@ -1151,9 +942,9 @@ jobs:
       - name: Build With Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: 8.5
+          gradle-version: 8.8
 
-      - name: Compile Debug APK
+      - name: Compile Production APK
         run: gradle assembleDebug --stacktrace --no-daemon
 
       - name: Upload Artifact
