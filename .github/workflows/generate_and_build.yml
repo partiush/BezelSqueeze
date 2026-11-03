@@ -9,11 +9,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Scaffold Production Project Files
         run: |
@@ -23,7 +23,7 @@ jobs:
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/java/com/edge/bezelmorph
 
-          # 1. gradle.properties (Optimized JVM & Daemon configuration)
+          # 1. gradle.properties
           cat << 'EOF' > gradle.properties
           android.useAndroidX=true
           android.nonTransitiveRClass=true
@@ -53,13 +53,15 @@ jobs:
           # 3. Root build.gradle.kts
           cat << 'EOF' > build.gradle.kts
           plugins {
-              id("com.android.application") version "8.5.2" apply false
-              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+              id("com.android.application") version "8.7.2" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
           }
           EOF
 
-          # 4. app/build.gradle.kts (Compatible down to Android 8.0 Oreo up to Android 15/16/17 SDK 35)
+          # 4. app/build.gradle.kts
           cat << 'EOF' > app/build.gradle.kts
+          import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
           plugins {
               id("com.android.application")
               id("org.jetbrains.kotlin.android")
@@ -78,16 +80,19 @@ jobs:
               }
 
               compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
+                  sourceCompatibility = JavaVersion.VERSION_21
+                  targetCompatibility = JavaVersion.VERSION_21
               }
-              kotlinOptions {
-                  jvmTarget = "17"
+
+              kotlin {
+                  compilerOptions {
+                      jvmTarget.set(JvmTarget.JVM_21)
+                  }
               }
           }
 
           dependencies {
-              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.core:core-ktx:1.15.0")
               implementation("androidx.appcompat:appcompat:1.7.0")
               implementation("com.google.android.material:material:1.12.0")
           }
@@ -142,7 +147,7 @@ jobs:
           </vector>
           EOF
 
-          # 6. AndroidManifest.xml (Strict, clean, non-bloated, Android 8 to 17 compatible)
+          # 6. AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -197,7 +202,7 @@ jobs:
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
               <string name="app_name">Bezel Morph</string>
-              <string name="service_description">Hardware perimeter displacement engine.</string>
+              <string name="service_description">Hardware edge displacement engine.</string>
           </resources>
           EOF
 
@@ -211,7 +216,7 @@ jobs:
           </resources>
           EOF
 
-          # 8. Optimized Configuration Store with Real Physical Defaults
+          # 8. Configuration Store
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MorphConfigStore.kt
           package com.edge.bezelmorph
 
@@ -259,7 +264,7 @@ jobs:
           }
           EOF
 
-          # 9. Low-Latency Surface Overlay View
+          # 9. Ultra Low-Latency Hardware Accelerated Surface View
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelSurfaceView.kt
           package com.edge.bezelmorph
 
@@ -269,6 +274,7 @@ jobs:
           import android.os.SystemClock
           import android.os.VibrationEffect
           import android.os.Vibrator
+          import android.os.VibratorManager
           import android.util.AttributeSet
           import android.view.Choreographer
           import android.view.View
@@ -300,9 +306,15 @@ jobs:
               private var isReleasePending: Boolean = false
               private val minHoldDurationMs: Long = 48L
 
-              private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-              private val choreographer = Choreographer.getInstance()
+              private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                  val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                  vibratorManager?.defaultVibrator
+              } else {
+                  @Suppress("DEPRECATION")
+                  context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+              }
 
+              private val choreographer = Choreographer.getInstance()
               private val morphPath = Path()
               private val bezelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                   color = Color.BLACK
@@ -318,7 +330,7 @@ jobs:
                   isReleasePending = false
                   targetA = A
                   if (currentA < 1.0f) {
-                      currentA = A * 0.45f
+                      currentA = A * 0.50f
                   }
                   velocityA = inwardVelocity
                   triggerHaptic()
@@ -454,7 +466,7 @@ jobs:
           }
           EOF
 
-          # 10. Hardware Key Accessibility Service
+          # 10. Hardware Key Monitor Service
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/HardwareKeyMonitorService.kt
           package com.edge.bezelmorph
 
@@ -553,7 +565,7 @@ jobs:
           }
           EOF
 
-          # 11. Production MainActivity with Strict Permission Gate & Pro UI
+          # 11. Production MainActivity with Strict Permission Gate & Clean UI
           cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/MainActivity.kt
           package com.edge.bezelmorph
 
@@ -572,7 +584,6 @@ jobs:
           import android.view.accessibility.AccessibilityManager
           import android.widget.*
           import androidx.appcompat.app.AppCompatActivity
-          import androidx.core.content.ContextCompat
 
           class MainActivity : AppCompatActivity() {
 
@@ -583,8 +594,6 @@ jobs:
 
               private lateinit var accessibilityStatusIcon: ImageView
               private lateinit var overlayStatusIcon: ImageView
-              private lateinit var proceedButton: Button
-
               private lateinit var preview: BezelSurfaceView
 
               override fun onCreate(savedInstanceState: Bundle?) {
@@ -641,7 +650,6 @@ jobs:
                   } else {
                       permissionGateLayout.visibility = View.VISIBLE
                       dashboardLayout.visibility = View.GONE
-                      proceedButton.visibility = View.GONE
                   }
               }
 
@@ -653,7 +661,7 @@ jobs:
                   }
 
                   val title = TextView(this).apply {
-                      text = "System Initialization"
+                      text = "System Authorization"
                       setTextColor(Color.WHITE)
                       textSize = 24f
                       typeface = Typeface.DEFAULT_BOLD
@@ -662,7 +670,7 @@ jobs:
                   permissionGateLayout.addView(title)
 
                   val subtitle = TextView(this).apply {
-                      text = "Grant required Android perimeter permissions to unlock the hardware sync engine."
+                      text = "Authorize display perimeter access to align physics with physical switches."
                       setTextColor(0xFF94A3B8.toInt())
                       textSize = 14f
                       gravity = Gravity.CENTER
@@ -673,7 +681,7 @@ jobs:
                   val cardAccessibility = createPermissionCard(
                       iconRes = R.drawable.ic_accessibility,
                       titleText = "Accessibility Interceptor",
-                      descText = "Captures hardware key events with zero interrupt delay"
+                      descText = "Directly monitors hardware volume button transitions"
                   ) {
                       startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                   }
@@ -682,39 +690,26 @@ jobs:
 
                   val cardOverlay = createPermissionCard(
                       iconRes = R.drawable.ic_overlay,
-                      titleText = "Hardware Perimeter Overlay",
-                      descText = "Renders morph curvature directly across screen boundaries"
+                      titleText = "Display Perimeter Layer",
+                      descText = "Projects visual deformation directly against display cutouts"
                   ) {
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                          val intent = Intent(
-                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                              Uri.parse("package:$packageName")
+                          startActivity(
+                              Intent(
+                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                  Uri.parse("package:$packageName")
+                              )
                           )
-                          startActivity(intent)
                       }
                   }
                   overlayStatusIcon = cardOverlay.second
                   permissionGateLayout.addView(cardOverlay.first)
 
-                  proceedButton = Button(this).apply {
-                      text = "Access Dashboard"
-                      setTextColor(Color.WHITE)
-                      textSize = 15f
-                      typeface = Typeface.DEFAULT_BOLD
-                      visibility = View.GONE
-                      background = GradientDrawable().apply {
-                          cornerRadius = 24f
-                          setColor(0xFF2563EB.toInt())
-                      }
-                      setOnClickListener { refreshPermissionsAndFlow() }
-                  }
-                  val btnParams = LinearLayout.LayoutParams(
-                      LinearLayout.LayoutParams.MATCH_PARENT,
-                      130
-                  ).apply { setMargins(0, 48, 0, 0) }
-                  permissionGateLayout.addView(proceedButton, btnParams)
-
-                  rootContainer.addView(permissionGateLayout, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                  rootContainer.addView(
+                      permissionGateLayout,
+                      FrameLayout.LayoutParams.MATCH_PARENT,
+                      FrameLayout.LayoutParams.MATCH_PARENT
+                  )
               }
 
               private fun createPermissionCard(
@@ -812,7 +807,7 @@ jobs:
                   content.addView(dashTitle)
 
                   val dashSub = TextView(this).apply {
-                      text = "Adjust curves to perfectly align with your physical hardware volume keys."
+                      text = "Calibrated directly to physical switch dimensions and spring actuation dynamics."
                       setTextColor(0xFF94A3B8.toInt())
                       textSize = 12f
                       setPadding(0, 0, 0, 20)
@@ -843,23 +838,23 @@ jobs:
                       preview.setPreviewStatic(1.0f)
                   })
 
-                  content.addView(buildSlider("Key Plateau (y0)", store.flatTopHalfLengthY0.toInt(), 12, 80) {
+                  content.addView(buildSlider("Plateau Flatness (y0)", store.flatTopHalfLengthY0.toInt(), 12, 80) {
                       store.flatTopHalfLengthY0 = it.toFloat()
                       updatePreview()
                   })
 
-                  content.addView(buildSlider("Shoulder Blend (w)", store.blendTransitionW.toInt(), 15, 100) {
+                  content.addView(buildSlider("Shoulder Transition (w)", store.blendTransitionW.toInt(), 15, 100) {
                       store.blendTransitionW = it.toFloat()
                       updatePreview()
                   })
 
-                  content.addView(buildSlider("Hardware Peak Depth (A)", store.peakAmplitudeA.toInt(), 6, 45) {
+                  content.addView(buildSlider("Actuation Intrusion Depth (A)", store.peakAmplitudeA.toInt(), 6, 45) {
                       store.peakAmplitudeA = it.toFloat()
                       updatePreview()
                   })
 
                   val physicsHeader = TextView(this).apply {
-                      text = "Haptic & Kinematic Response"
+                      text = "Kinematics & Response Dynamics"
                       setTextColor(0xFF38BDF8.toInt())
                       textSize = 14f
                       typeface = Typeface.DEFAULT_BOLD
@@ -867,7 +862,7 @@ jobs:
                   }
                   content.addView(physicsHeader)
 
-                  content.addView(buildSlider("Zero-Delay Frequency", store.speedOverall.toInt(), 30, 95) {
+                  content.addView(buildSlider("Resonance Frequency", store.speedOverall.toInt(), 30, 95) {
                       store.speedOverall = it.toFloat()
                       preview.omegaN = store.speedOverall
                   })
@@ -877,7 +872,7 @@ jobs:
                       preview.inwardVelocity = store.inwardImpulse
                   })
 
-                  content.addView(buildSlider("Damping Ratio", (store.outwardDamping * 100).toInt(), 50, 99) {
+                  content.addView(buildSlider("Oscillator Damping Ratio", (store.outwardDamping * 100).toInt(), 50, 99) {
                       store.outwardDamping = it / 100f
                       preview.zeta = store.outwardDamping
                   })
@@ -940,9 +935,9 @@ jobs:
           EOF
 
       - name: Build With Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.8
+          gradle-version: 8.11.1
 
       - name: Compile Production APK
         run: gradle assembleDebug --stacktrace --no-daemon
