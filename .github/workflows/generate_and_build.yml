@@ -34,7 +34,16 @@ jobs:
           mkdir -p app/src/main/assets/models
 
           # -------------------------------------------------------------
-          # 1. ROOT BUILD & SETTINGS
+          # 1. GRADLE PROPERTIES (FIXES ANDROIDX ISSUE)
+          # -------------------------------------------------------------
+          cat << 'EOF' > gradle.properties
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          EOF
+
+          # -------------------------------------------------------------
+          # 2. ROOT BUILD & SETTINGS
           # -------------------------------------------------------------
           cat << 'EOF' > settings.gradle
           pluginManagement {
@@ -63,7 +72,7 @@ jobs:
           EOF
 
           # -------------------------------------------------------------
-          # 2. APP GRADLE WITH NDK & CAMERAX
+          # 3. APP GRADLE WITH NDK & CAMERAX
           # -------------------------------------------------------------
           cat << 'EOF' > app/build.gradle
           plugins {
@@ -126,7 +135,6 @@ jobs:
               implementation 'com.google.android.material:material:1.11.0'
               implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
 
-              // CameraX dependencies
               def camerax_version = "1.3.1"
               implementation "androidx.camera:camera-core:${camerax_version}"
               implementation "androidx.camera:camera-camera2:${camerax_version}"
@@ -138,7 +146,7 @@ jobs:
           EOF
 
           # -------------------------------------------------------------
-          # 3. ANDROID MANIFEST
+          # 4. ANDROID MANIFEST
           # -------------------------------------------------------------
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
@@ -170,7 +178,7 @@ jobs:
           EOF
 
           # -------------------------------------------------------------
-          # 4. RESOURCES (UI LAYOUT & STYLES)
+          # 5. UI LAYOUT & TARGET LOCK RETICLE
           # -------------------------------------------------------------
           cat << 'EOF' > app/src/main/res/values/themes.xml
           <resources>
@@ -190,12 +198,28 @@ jobs:
               android:layout_height="match_parent"
               android:background="#000000">
 
-              <androidx.camera.view.PreviewView
-                  android:id="@+id/viewFinder"
+              <FrameLayout
+                  android:id="@+id/previewContainer"
                   android:layout_width="match_parent"
-                  android:layout_height="match_parent" />
+                  android:layout_height="match_parent">
 
-              <!-- Overlay to display captured and remastered picture -->
+                  <androidx.camera.view.PreviewView
+                      android:id="@+id/viewFinder"
+                      android:layout_width="match_parent"
+                      android:layout_height="match_parent" />
+
+                  <!-- Viewfinder Active Stabilization Reticle Overlay -->
+                  <View
+                      android:id="@+id/lockReticle"
+                      android:layout_width="70dp"
+                      android:layout_height="70dp"
+                      android:layout_gravity="center"
+                      android:background="@android:drawable/btn_default_small"
+                      android:backgroundTint="#00FFCC"
+                      android:alpha="0.6"
+                      android:visibility="gone" />
+              </FrameLayout>
+
               <ImageView
                   android:id="@+id/resultImageView"
                   android:layout_width="match_parent"
@@ -203,20 +227,39 @@ jobs:
                   android:scaleType="fitCenter"
                   android:visibility="gone" />
 
-              <TextView
-                  android:id="@+id/zoomLevelText"
+              <LinearLayout
+                  android:id="@+id/topBar"
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
                   android:layout_marginTop="36dp"
-                  android:background="#66000000"
-                  android:padding="10dp"
-                  android:text="100.0x Zoom"
-                  android:textColor="#FFFFFF"
-                  android:textSize="18sp"
-                  android:textStyle="bold"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical"
                   app:layout_constraintEnd_toEndOf="parent"
                   app:layout_constraintStart_toStartOf="parent"
-                  app:layout_constraintTop_toTopOf="parent" />
+                  app:layout_constraintTop_toTopOf="parent">
+
+                  <TextView
+                      android:id="@+id/zoomLevelText"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:background="#88000000"
+                      android:padding="8dp"
+                      android:text="10.0x Zoom"
+                      android:textColor="#FFFFFF"
+                      android:textSize="16sp"
+                      android:textStyle="bold" />
+
+                  <Button
+                      android:id="@+id/toggleMoonModeBtn"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginStart="8dp"
+                      android:text="Auto Moon: ON"
+                      android:textSize="12sp"
+                      style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                      app:strokeColor="#FFFF00"
+                      android:textColor="#FFFF00" />
+              </LinearLayout>
 
               <ProgressBar
                   android:id="@+id/progressBar"
@@ -235,7 +278,7 @@ jobs:
                   android:layout_marginTop="12dp"
                   android:background="#99000000"
                   android:padding="8dp"
-                  android:text="Processing frames..."
+                  android:text="Stabilizing & Remastering..."
                   android:textColor="#00FFCC"
                   android:textSize="14sp"
                   android:visibility="gone"
@@ -285,21 +328,19 @@ jobs:
           EOF
 
       # -------------------------------------------------------------
-      # 5. DOWNLOAD PREBUILT OPENCV & NCNN ANDROID LIBRARIES
+      # 6. DOWNLOAD PREBUILT OPENCV & NCNN ANDROID LIBRARIES
       # -------------------------------------------------------------
       - name: Download OpenCV & NCNN Prebuilt SDKs
         run: |
           mkdir -p app/src/main/cpp/3rdparty
           cd app/src/main/cpp/3rdparty
 
-          # Download OpenCV 4.8.0 Android SDK
           echo "Downloading OpenCV Android SDK..."
           curl -L -o opencv.zip https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip
           unzip -q opencv.zip
           mv OpenCV-android-sdk/sdk/native opencv
           rm -rf opencv.zip OpenCV-android-sdk
 
-          # Download Tencent NCNN Vulkan Android SDK
           echo "Downloading NCNN Android Vulkan SDK..."
           curl -L -o ncnn.zip https://github.com/Tencent/ncnn/releases/download/20231027/ncnn-20231027-android-vulkan.zip
           unzip -q ncnn.zip
@@ -307,7 +348,7 @@ jobs:
           rm -rf ncnn.zip
 
       # -------------------------------------------------------------
-      # 6. SETUP NEURAL MODEL ASSETS
+      # 7. SETUP NEURAL MODEL ASSETS
       # -------------------------------------------------------------
       - name: Fetch Real-ESRGAN Compact Model
         run: |
@@ -316,7 +357,7 @@ jobs:
           curl -L -o realesrgan.bin https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.bin || touch realesrgan.bin
 
       # -------------------------------------------------------------
-      # 7. C++ NATIVE ENGINE (SUB-PIXEL SHIFT FUSION + NCNN UPSCALER)
+      # 8. C++ NATIVE ENGINE (MOON TRACKING, MANUAL LOCK & MULTI-FRAME FUSION)
       # -------------------------------------------------------------
       - name: Write C++ Engine and JNI Bridge
         run: |
@@ -326,11 +367,9 @@ jobs:
 
           set(CMAKE_CXX_STANDARD 17)
 
-          # Configure OpenCV
           set(OpenCV_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/opencv/jni)
           find_package(OpenCV REQUIRED)
 
-          # Configure NCNN
           set(ncnn_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ncnn/arm64-v8a/lib/cmake/ncnn)
           find_package(ncnn REQUIRED)
 
@@ -356,6 +395,7 @@ jobs:
           #include <jni.h>
           #include <string>
           #include <vector>
+          #include <cmath>
           #include <android/log.h>
           #include <android/bitmap.h>
 
@@ -368,7 +408,6 @@ jobs:
 
           #define TAG "SuperZoomNative"
           #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
-          #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
           static ncnn::Net g_sr_net;
           static bool g_sr_initialized = false;
@@ -387,7 +426,6 @@ jobs:
               g_sr_net.opt.use_fp16_arithmetic = true;
 
               jbyte* param_ptr = env->GetByteArrayElements(param_bytes, nullptr);
-              jsize param_len = env->GetArrayLength(param_bytes);
               int ret1 = g_sr_net.load_param_mem((const char*)param_ptr);
               env->ReleaseByteArrayElements(param_bytes, param_ptr, 0);
 
@@ -396,12 +434,54 @@ jobs:
               env->ReleaseByteArrayElements(bin_bytes, bin_ptr, 0);
 
               g_sr_initialized = (ret1 == 0 && ret2 == 0);
-              LOGD("Model initialized: %s", g_sr_initialized ? "SUCCESS" : "FAILED (Falling back to adaptive detail restoration)");
               return JNI_TRUE;
           }
 
-          // Deterministic sub-pixel translation estimation using phase correlation
-          // Eliminates text hallucination by capturing actual sensor micro-movements
+          // Detect Moon disc via luminance thresholding and contour moments
+          extern "C" JNIEXPORT jfloatArray JNICALL
+          Java_com_superzoom_app_SuperZoomNative_detectMoonTarget(
+                  JNIEnv* env,
+                  jobject /* this */,
+                  jobject bitmap) {
+
+              AndroidBitmapInfo info;
+              if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) return nullptr;
+
+              void* pixels = nullptr;
+              AndroidBitmap_lockPixels(env, bitmap, &pixels);
+              cv::Mat frameRGBA(info.height, info.width, CV_8UC4, pixels);
+              cv::Mat gray;
+              cv::cvtColor(frameRGBA, gray, cv::COLOR_RGBA2GRAY);
+              AndroidBitmap_unlockPixels(env, bitmap);
+
+              // Moon is exceptionally bright compared to dark sky background
+              cv::Mat thresh;
+              cv::threshold(gray, thresh, 190, 255, cv::THRESH_BINARY);
+
+              std::vector<std::vector<cv::Point>> contours;
+              cv::findContours(thresh, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+              float foundX = -1.0f, foundY = -1.0f;
+              double maxArea = 0;
+
+              for (const auto& c : contours) {
+                  double area = cv::contourArea(c);
+                  if (area > 150 && area > maxArea) {
+                      cv::Moments m = cv::moments(c);
+                      if (m.m00 != 0) {
+                          foundX = static_cast<float>(m.m10 / m.m00);
+                          foundY = static_cast<float>(m.m01 / m.m00);
+                          maxArea = area;
+                      }
+                  }
+              }
+
+              jfloatArray result = env->NewFloatArray(2);
+              float outCoords[2] = {foundX, foundY};
+              env->SetFloatArrayRegion(result, 0, 2, outCoords);
+              return result;
+          }
+
           cv::Point2d estimateSubpixelShift(const cv::Mat& ref, const cv::Mat& current) {
               cv::Mat refGray, currGray;
               if (ref.channels() == 3) cv::cvtColor(ref, refGray, cv::COLOR_BGR2GRAY);
@@ -413,8 +493,7 @@ jobs:
               refGray.convertTo(r32, CV_32F);
               currGray.convertTo(c32, CV_32F);
 
-              cv::Point2d shift = cv::phaseCorrelate(r32, c32);
-              return shift;
+              return cv::phaseCorrelate(r32, c32);
           }
 
           extern "C" JNIEXPORT jobject JNICALL
@@ -423,6 +502,8 @@ jobs:
                   jobject /* this */,
                   jobjectArray frame_bitmaps,
                   jfloat zoom_factor,
+                  jfloat target_x_ratio,
+                  jfloat target_y_ratio,
                   jint target_width,
                   jint target_height) {
 
@@ -432,37 +513,41 @@ jobs:
               std::vector<cv::Mat> frames;
               AndroidBitmapInfo info;
 
-              // Convert Java Bitmaps to OpenCV Mats
               for (int i = 0; i < frameCount; ++i) {
                   jobject bmp = env->GetObjectArrayElement(frame_bitmaps, i);
                   if (AndroidBitmap_getInfo(env, bmp, &info) < 0) continue;
 
                   void* pixels = nullptr;
                   AndroidBitmap_lockPixels(env, bmp, &pixels);
-
                   cv::Mat frameRGBA(info.height, info.width, CV_8UC4, pixels);
                   cv::Mat frameBGR;
                   cv::cvtColor(frameRGBA, frameBGR, cv::COLOR_RGBA2BGR);
                   frames.push_back(frameBGR.clone());
-
                   AndroidBitmap_unlockPixels(env, bmp);
                   env->DeleteLocalRef(bmp);
               }
 
               if (frames.empty()) return nullptr;
 
-              // 1. Calculate Exact Viewport Crop (Center crop matching zoom factor)
               int srcW = frames[0].cols;
               int srcH = frames[0].rows;
               float cropW = (float)srcW / zoom_factor;
               float cropH = (float)srcH / zoom_factor;
-              float cropX = (srcW - cropW) / 2.0f;
-              float cropY = (srcH - cropH) / 2.0f;
+
+              // Center around user manual lock target or moon centroid
+              float centerX = (target_x_ratio >= 0) ? (target_x_ratio * srcW) : (srcW / 2.0f);
+              float centerY = (target_y_ratio >= 0) ? (target_y_ratio * srcH) : (srcH / 2.0f);
+
+              float cropX = centerX - (cropW / 2.0f);
+              float cropY = centerY - (cropH / 2.0f);
+
+              cropX = std::max(0.0f, std::min(cropX, srcW - cropW));
+              cropY = std::max(0.0f, std::min(cropY, srcH - cropH));
 
               cv::Rect cropRect((int)cropX, (int)cropY, (int)cropW, (int)cropH);
-              cropRect = cropRect & cv::Rect(0, 0, srcW, srcH); // Bound within boundaries
+              cropRect = cropRect & cv::Rect(0, 0, srcW, srcH);
 
-              // 2. Select Sharpest Keyframe via Laplacian Variance
+              // Find sharpest frame
               int bestIdx = 0;
               double maxVariance = -1.0;
               for (size_t i = 0; i < frames.size(); ++i) {
@@ -479,21 +564,18 @@ jobs:
               }
 
               cv::Mat anchorFrame = frames[bestIdx](cropRect).clone();
-
-              // 3. Sub-pixel Multi-Frame Shift & Accumulation (True Optical Signal Capture)
               cv::Mat accumulator = cv::Mat::zeros(anchorFrame.size(), CV_32FC3);
               float totalWeight = 0.0f;
 
+              // Sub-pixel multi-frame shift alignment to prevent text/feature hallucinations
               for (size_t i = 0; i < frames.size(); ++i) {
                   cv::Mat currentCrop = frames[i](cropRect);
                   cv::Point2d shift = estimateSubpixelShift(anchorFrame, currentCrop);
 
-                  // Rejection of massive outlier frames (e.g. violent shake)
-                  if (std::abs(shift.x) > cropW * 0.2 || std::abs(shift.y) > cropH * 0.2) {
+                  if (std::abs(shift.x) > cropW * 0.25 || std::abs(shift.y) > cropH * 0.25) {
                       continue;
                   }
 
-                  // Sub-pixel affine warp matrix
                   cv::Mat warpMat = (cv::Mat_<double>(2, 3) << 1.0, 0.0, -shift.x, 0.0, 1.0, -shift.y);
                   cv::Mat aligned;
                   cv::warpAffine(currentCrop, aligned, warpMat, anchorFrame.size(), cv::INTER_CUBIC, cv::BORDER_REFLECT);
@@ -511,7 +593,6 @@ jobs:
                   fused = anchorFrame;
               }
 
-              // 4. On-Device Neural Super-Resolution or Deterministic High-Pass Enhancement
               cv::Mat finalOutput;
               if (g_sr_initialized) {
                   ncnn::Mat in = ncnn::Mat::from_pixels(fused.data, ncnn::Mat::PIXEL_BGR2RGB, fused.cols, fused.rows);
@@ -522,16 +603,13 @@ jobs:
                   finalOutput.create(out.h, out.w, CV_8UC3);
                   out.to_pixels(finalOutput.data, ncnn::Mat::PIXEL_RGB2BGR);
               } else {
-                  // Fallback: Bilateral edge-preserving guided filter + Unsharp Mask
-                  // Guarantees zero gibberish / synthetic text hallucination
                   cv::resize(fused, finalOutput, cv::Size(target_width, target_height), 0, 0, cv::INTER_LANCZOS4);
                   cv::Mat smoothed;
-                  cv::bilateralFilter(finalOutput, smoothed, 9, 75, 75);
+                  cv::bilateralFilter(finalOutput, smoothed, 7, 50, 50);
                   cv::Mat detail = finalOutput - smoothed;
-                  finalOutput = finalOutput + 1.5 * detail;
+                  finalOutput = finalOutput + 1.6 * detail;
               }
 
-              // 5. Construct Android Bitmap output
               jclass bitmapConfigClass = env->FindClass("android/graphics/Bitmap$Config");
               jfieldID argb8888FieldID = env->GetStaticFieldID(bitmapConfigClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
               jobject argb8888Config = env->GetStaticObjectField(bitmapConfigClass, argb8888FieldID);
@@ -554,7 +632,7 @@ jobs:
           EOF
 
       # -------------------------------------------------------------
-      # 8. KOTLIN APPLICATION CODE (JNI INTERFACE + CAMERAX BURST UI)
+      # 9. KOTLIN UI, REAL-TIME STABILIZATION & MANUAL/AUTO LOCK
       # -------------------------------------------------------------
       - name: Write Kotlin Camera & Processing Code
         run: |
@@ -569,10 +647,12 @@ jobs:
               }
 
               external fun initModel(paramBytes: ByteArray, binBytes: ByteArray): Boolean
-
+              external fun detectMoonTarget(bitmap: Bitmap): FloatArray?
               external fun processBurstAndUpscale(
                   frames: Array<Bitmap>,
                   zoomFactor: Float,
+                  targetXRatio: Float,
+                  targetYRatio: Float,
                   targetWidth: Int,
                   targetHeight: Int
               ): Bitmap?
@@ -583,10 +663,13 @@ jobs:
           package com.superzoom.app
 
           import android.Manifest
+          import android.annotation.SuppressLint
           import android.content.pm.PackageManager
           import android.graphics.Bitmap
           import android.graphics.Matrix
+          import android.graphics.PointF
           import android.os.Bundle
+          import android.view.MotionEvent
           import android.view.View
           import android.widget.Toast
           import androidx.appcompat.app.AppCompatActivity
@@ -607,12 +690,18 @@ jobs:
               private var cameraControl: CameraControl? = null
               private var cameraInfo: CameraInfo? = null
 
-              // Circular buffer for 12 continuous frames
               private val burstBuffer = ConcurrentLinkedQueue<Bitmap>()
               private val BUFFER_SIZE = 12
               private var currentZoomFactor = 10.0f
               private var isProcessing = false
 
+              // Stabilization and Target Locking
+              private var autoMoonDetection = true
+              private var lockedTargetRatio: PointF? = null
+              private var smoothedTranslationX = 0f
+              private var smoothedTranslationY = 0f
+
+              @SuppressLint("ClickableViewAccessibility")
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   binding = ActivityMainBinding.inflate(layoutInflater)
@@ -642,30 +731,58 @@ jobs:
                   }
               }
 
+              @SuppressLint("ClickableViewAccessibility")
               private fun setupUI() {
                   binding.zoomSlider.addOnChangeListener { _, value, _ ->
                       currentZoomFactor = value
                       binding.zoomLevelText.text = String.format("%.1fx Zoom", currentZoomFactor)
                       
-                      // Apply digital zoom preview to hardware sensor within supported ratio
                       cameraInfo?.zoomState?.value?.let { state ->
                           val hardwareZoom = (currentZoomFactor / 10.0f).coerceIn(state.minZoomRatio, state.maxZoomRatio)
                           cameraControl?.setZoomRatio(hardwareZoom)
                       }
                   }
 
+                  // Auto Moon Tracking toggle
+                  binding.toggleMoonModeBtn.setOnClickListener {
+                      autoMoonDetection = !autoMoonDetection
+                      binding.toggleMoonModeBtn.text = if (autoMoonDetection) "Auto Moon: ON" else "Auto Moon: OFF"
+                      if (!autoMoonDetection && lockedTargetRatio == null) {
+                          binding.lockReticle.visibility = View.GONE
+                      }
+                  }
+
+                  // Manual Tap-to-Lock on screen
+                  binding.viewFinder.setOnTouchListener { _, event ->
+                      if (event.action == MotionEvent.ACTION_DOWN) {
+                          autoMoonDetection = false
+                          binding.toggleMoonModeBtn.text = "Auto Moon: OFF"
+
+                          val normX = event.x / binding.viewFinder.width.toFloat()
+                          val normY = event.y / binding.viewFinder.height.toFloat()
+                          lockedTargetRatio = PointF(normX, normY)
+
+                          binding.lockReticle.x = event.x - (binding.lockReticle.width / 2f)
+                          binding.lockReticle.y = event.y - (binding.lockReticle.height / 2f)
+                          binding.lockReticle.visibility = View.VISIBLE
+
+                          Toast.makeText(this, "Target Locked", Toast.LENGTH_SHORT).show()
+                      }
+                      true
+                  }
+
                   binding.shutterButton.setOnClickListener {
                       if (!isProcessing && burstBuffer.isNotEmpty()) {
                           captureAndRemaster()
                       } else {
-                          Toast.makeText(this, "Filling burst buffer...", Toast.LENGTH_SHORT).show()
+                          Toast.makeText(this, "Buffering frames...", Toast.LENGTH_SHORT).show()
                       }
                   }
 
                   binding.closePreviewButton.setOnClickListener {
                       binding.resultImageView.visibility = View.GONE
                       binding.closePreviewButton.visibility = View.GONE
-                      binding.viewFinder.visibility = View.VISIBLE
+                      binding.previewContainer.visibility = View.VISIBLE
                   }
               }
 
@@ -678,7 +795,6 @@ jobs:
                           it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
                       }
 
-                      // Stream analyzer operating as the burst ring buffer
                       val imageAnalyzer = ImageAnalysis.Builder()
                           .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                           .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -692,6 +808,33 @@ jobs:
                                           val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
                                           Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
                                       } else bmp
+
+                                      // Auto Moon Centroid Detection & Real-time Stabilization
+                                      if (autoMoonDetection) {
+                                          val coords = SuperZoomNative.detectMoonTarget(rotated)
+                                          if (coords != null && coords[0] >= 0 && coords[1] >= 0) {
+                                              val moonRatioX = coords[0] / rotated.width.toFloat()
+                                              val moonRatioY = coords[1] / rotated.height.toFloat()
+                                              lockedTargetRatio = PointF(moonRatioX, moonRatioY)
+
+                                              runOnUiThread {
+                                                  val screenTargetX = moonRatioX * binding.viewFinder.width
+                                                  val screenTargetY = moonRatioY * binding.viewFinder.height
+                                                  binding.lockReticle.x = screenTargetX - (binding.lockReticle.width / 2f)
+                                                  binding.lockReticle.y = screenTargetY - (binding.lockReticle.height / 2f)
+                                                  binding.lockReticle.visibility = View.VISIBLE
+
+                                                  // Counter-shift Viewfinder canvas (Active Electronic Stabilization)
+                                                  val deltaX = (binding.viewFinder.width / 2f) - screenTargetX
+                                                  val deltaY = (binding.viewFinder.height / 2f) - screenTargetY
+                                                  smoothedTranslationX += (deltaX - smoothedTranslationX) * 0.25f
+                                                  smoothedTranslationY += (deltaY - smoothedTranslationY) * 0.25f
+
+                                                  binding.viewFinder.translationX = smoothedTranslationX * 0.5f
+                                                  binding.viewFinder.translationY = smoothedTranslationY * 0.5f
+                                              }
+                                          }
+                                      }
 
                                       burstBuffer.offer(rotated)
                                       while (burstBuffer.size > BUFFER_SIZE) {
@@ -722,13 +865,15 @@ jobs:
                   binding.statusText.text = "Aligning multi-frames & applying AI..."
                   binding.statusText.visibility = View.VISIBLE
 
-                  // Freeze the frames from the ring buffer
                   val framesSnapshot = burstBuffer.toTypedArray()
+                  val target = lockedTargetRatio
 
                   CoroutineScope(Dispatchers.Default).launch {
                       val resultBitmap = SuperZoomNative.processBurstAndUpscale(
                           framesSnapshot,
                           currentZoomFactor,
+                          target?.x ?: -1.0f,
+                          target?.y ?: -1.0f,
                           1080,
                           1920
                       )
@@ -739,7 +884,7 @@ jobs:
                           isProcessing = false
 
                           if (resultBitmap != null) {
-                              binding.viewFinder.visibility = View.GONE
+                              binding.previewContainer.visibility = View.GONE
                               binding.resultImageView.setImageBitmap(resultBitmap)
                               binding.resultImageView.visibility = View.VISIBLE
                               binding.closePreviewButton.visibility = View.VISIBLE
@@ -779,15 +924,16 @@ jobs:
           EOF
 
       # -------------------------------------------------------------
-      # 9. ASSEMBLE RELEASE APK
+      # 10. SETUP COMPATIBLE GRADLE 8.2 WRAPPER & ASSEMBLE APK
       # -------------------------------------------------------------
-      - name: Build APK with Gradle
+      - name: Build APK with Compatible Gradle Wrapper
         run: |
-          gradle wrapper
+          gradle wrapper --gradle-version 8.2 --distribution-type bin
+          chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace
 
       # -------------------------------------------------------------
-      # 10. UPLOAD APK ARTIFACT
+      # 11. UPLOAD APK ARTIFACT
       # -------------------------------------------------------------
       - name: Upload Downloadable APK
         uses: actions/upload-artifact@v4
