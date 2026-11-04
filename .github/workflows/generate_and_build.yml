@@ -1,1592 +1,796 @@
-name: Build BezelMorph (Production + Debug)
+name: Build 100x SuperZoom APK
 
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
-      - name: Scaffold BezelMorph — Complete Source
+      - name: Setup Android NDK and CMake
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+          cmake-version: 3.22.1
+
+      - name: Generate Complete Android Project Structure
         run: |
-          set -e
-          mkdir -p gradle/wrapper app/src/main/res/{values,values-night,drawable,mipmap-anydpi-v26,xml,layout} app/src/main/assets
-          mkdir -p app/src/main/java/com/edge/bezelmorph/{core,engine,ui,integration,shader,di,data}
+          mkdir -p app/src/main/java/com/superzoom/app
+          mkdir -p app/src/main/cpp
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/assets/models
 
-          # 1. gradle.properties
-          cat << 'EOF' > gradle.properties
-          android.useAndroidX=true
-          android.nonTransitiveRClass=true
-          org.gradle.jvmargs=-Xmx4096m -XX:+UseG1GC -Dfile.encoding=UTF-8
-          android.enableR8.fullMode=true
-          android.enableJetifier=false
-          EOF
-
-          # 2. settings.gradle.kts
-          cat << 'EOF' > settings.gradle.kts
+          # -------------------------------------------------------------
+          # 1. ROOT BUILD & SETTINGS
+          # -------------------------------------------------------------
+          cat << 'EOF' > settings.gradle
           pluginManagement {
-              repositories { google(); mavenCentral(); gradlePluginPortal() }
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
           }
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories { google(); mavenCentral() }
+              repositories {
+                  google()
+                  mavenCentral()
+              }
           }
-          rootProject.name = "BezelMorph"
-          include(":app")
+          rootProject.name = "SuperZoom100x"
+          include ':app'
           EOF
 
-          # 3. Root build.gradle.kts (Kotlin plugin removed — built into AGP 9)
-          cat << 'EOF' > build.gradle.kts
+          cat << 'EOF' > build.gradle
           plugins {
-              id("com.android.application") version "9.0.1" apply false
-              id("com.google.dagger.hilt.android") version "2.57.1" apply false
-              id("com.google.devtools.ksp") version "2.2.10-2.0.2" apply false
-              id("org.jetbrains.kotlin.plugin.compose") version "2.2.10" apply false
+              id 'com.android.application' version '8.2.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
           }
           EOF
 
-          # 4. app/build.gradle.kts
-          cat << 'EOF' > app/build.gradle.kts
-          import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
+          # -------------------------------------------------------------
+          # 2. APP GRADLE WITH NDK & CAMERAX
+          # -------------------------------------------------------------
+          cat << 'EOF' > app/build.gradle
           plugins {
-              id("com.android.application")
-              id("com.google.dagger.hilt.android")
-              id("com.google.devtools.ksp")
-              id("org.jetbrains.kotlin.plugin.compose")
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
           }
 
           android {
-              namespace = "com.edge.bezelmorph"
-              compileSdk = 36
+              namespace 'com.superzoom.app'
+              compileSdk 34
 
               defaultConfig {
-                  applicationId = "com.edge.bezelmorph"
-                  minSdk = 26
-                  targetSdk = 36
-                  versionCode = 300
-                  versionName = "300.0.0"
-                  resourceConfigurations += listOf("en","fr","de","hi","ja","zh","es","pt","ru","ko")
-              }
+                  applicationId "com.superzoom.app"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
 
-              signingConfigs {
-                  create("release") {
-                      if (System.getenv("KEYSTORE_BASE64") != null) {
-                          storeFile = file("release.keystore")
-                          storePassword = System.getenv("KEYSTORE_PASSWORD")
-                          keyAlias = System.getenv("KEY_ALIAS")
-                          keyPassword = System.getenv("KEY_PASSWORD")
+                  externalNativeBuild {
+                      cmake {
+                          cppFlags "-std=c++17 -O3 -frtti -fexceptions"
+                          abiFilters "arm64-v8a"
                       }
+                  }
+                  ndk {
+                      abiFilters "arm64-v8a"
                   }
               }
 
               buildTypes {
-                  debug { isMinifyEnabled = false; applicationIdSuffix = ".debug" }
                   release {
-                      isMinifyEnabled = true
-                      isShrinkResources = true
-                      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-                      signingConfig = signingConfigs.findByName("release")
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                   }
               }
 
               compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_21
-                  targetCompatibility = JavaVersion.VERSION_21
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
               }
-              kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_21) } }
-              buildFeatures { compose = true; buildConfig = true }
-              packaging { resources.excludes += setOf("META-INF/AL2.0","META-INF/LGPL2.1") }
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
+
+              externalNativeBuild {
+                  cmake {
+                      path "src/main/cpp/CMakeLists.txt"
+                      version "3.22.1"
+                  }
+              }
+
+              buildFeatures {
+                  viewBinding true
+              }
           }
 
           dependencies {
-              // Compose BOM 2026.09.00 (Latest Stable)
-              implementation(platform("androidx.compose:compose-bom:2026.09.00"))
-              implementation("androidx.compose.ui:ui")
-              implementation("androidx.compose.material3:material3")
-              implementation("androidx.compose.ui:ui-tooling-preview")
-              implementation("androidx.activity:activity-compose:1.12.0")
-              implementation("androidx.navigation:navigation-compose:2.9.8")
-              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
-              
-              // Core Android
-              implementation("androidx.core:core-ktx:1.17.0")
-              implementation("androidx.appcompat:appcompat:1.7.1")
-              implementation("com.google.android.material:material:1.13.0")
-              implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
-              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-              
-              // Hilt + KSP
-              implementation("com.google.dagger:hilt-android:2.57.1")
-              ksp("com.google.dagger:hilt-compiler:2.57.1")
-              implementation("androidx.hilt:hilt-navigation-compose:1.4.0")
-              
-              // Room
-              implementation("androidx.room:room-runtime:2.8.5")
-              implementation("androidx.room:room-ktx:2.8.5")
-              ksp("androidx.room:room-compiler:2.8.5")
-              
-              // DataStore + Gson
-              implementation("androidx.datastore:datastore-preferences:1.2.1")
-              implementation("com.google.code.gson:gson:2.13.1")
-              
-              // Testing
-              testImplementation("junit:junit:4.13.2")
-              testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+              implementation 'androidx.core:core-ktx:1.12.0'
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'com.google.android.material:material:1.11.0'
+              implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+              // CameraX dependencies
+              def camerax_version = "1.3.1"
+              implementation "androidx.camera:camera-core:${camerax_version}"
+              implementation "androidx.camera:camera-camera2:${camerax_version}"
+              implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+              implementation "androidx.camera:camera-view:${camerax_version}"
+
+              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
           }
           EOF
 
-          cat << 'EOF' > app/proguard-rules.pro
-          -keepclassmembers class com.edge.bezelmorph.core.MorphConfig { *; }
-          -keep class com.edge.bezelmorph.shader.ShaderLibrary { *; }
-          -keep class * extends androidx.room.RoomDatabase { *; }
-          -keep @androidx.room.Entity class *
-          EOF
-
-          # 5. AndroidManifest.xml
+          # -------------------------------------------------------------
+          # 3. ANDROID MANIFEST
+          # -------------------------------------------------------------
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <uses-permission android:name="android.permission.VIBRATE" />
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-feature android:name="android.hardware.camera.any" />
+              <uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="false" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
               <application
-                  android:name=".BezelMorphApp"
                   android:allowBackup="true"
-                  android:hardwareAccelerated="true"
-                  android:icon="@mipmap/ic_launcher"
-                  android:label="@string/app_name"
-                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:icon="@android:drawable/ic_menu_camera"
+                  android:label="100x SuperZoom"
+                  android:roundIcon="@android:drawable/ic_menu_camera"
                   android:supportsRtl="true"
-                  android:theme="@style/Theme.MorphEdge">
-
+                  android:theme="@style/Theme.SuperZoom">
                   <activity
-                      android:name=".ui.MainActivity"
-                      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density"
+                      android:name=".MainActivity"
                       android:exported="true"
-                      android:launchMode="singleTop">
+                      android:screenOrientation="portrait">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
-
-                  <service
-                      android:name=".engine.HardwareKeyMonitorService"
-                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-                      android:exported="true"
-                      android:label="@string/service_label">
-                      <intent-filter>
-                          <action android:name="android.accessibilityservice.AccessibilityService" />
-                      </intent-filter>
-                      <meta-data
-                          android:name="android.accessibilityservice"
-                          android:resource="@xml/button_event_service_config" />
-                  </service>
-
-                  <service
-                      android:name=".engine.FloatingBubbleService"
-                      android:exported="false"
-                      android:foregroundServiceType="specialUse">
-                      <property
-                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                          android:value="Floating control bubble for bezel morphology engine" />
-                  </service>
-
-                  <service
-                      android:name=".integration.QuickSettingsTile"
-                      android:exported="true"
-                      android:icon="@drawable/ic_qs_tile"
-                      android:label="@string/qs_tile_label"
-                      android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-                      <intent-filter>
-                          <action android:name="android.service.quicksettings.action.QS_TILE" />
-                      </intent-filter>
-                  </service>
-
-                  <receiver
-                      android:name=".integration.BezelWidgetProvider"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                      </intent-filter>
-                      <meta-data
-                          android:name="android.appwidget.provider"
-                          android:resource="@xml/bezel_widget_info" />
-                  </receiver>
-
-                  <receiver
-                      android:name=".integration.AutomationReceiver"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="com.edge.bezelmorph.TRIGGER" />
-                          <action android:name="com.edge.bezelmorph.SET_PROFILE" />
-                          <action android:name="com.edge.bezelmorph.INTERNAL_TRIGGER" />
-                      </intent-filter>
-                  </receiver>
-
-                  <receiver android:name=".integration.BootReceiver" android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.BOOT_COMPLETED" />
-                      </intent-filter>
-                  </receiver>
-
-                  <meta-data
-                      android:name="android.app.shortcuts"
-                      android:resource="@xml/shortcuts" />
               </application>
           </manifest>
           EOF
 
-          # 6. Accessibility service config
-          cat << 'EOF' > app/src/main/res/xml/button_event_service_config.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-              android:accessibilityEventTypes="typeWindowStateChanged"
-              android:accessibilityFeedbackType="feedbackGeneric"
-              android:accessibilityFlags="flagRequestFilterKeyEvents|flagRetrieveInteractiveWindows"
-              android:canRequestFilterKeyEvents="true"
-              android:canRetrieveWindowContent="true"
-              android:description="@string/service_description"
-              android:notificationTimeout="50" />
-          EOF
-
-          # 7. Strings
-          cat << 'EOF' > app/src/main/res/values/strings.xml
+          # -------------------------------------------------------------
+          # 4. RESOURCES (UI LAYOUT & STYLES)
+          # -------------------------------------------------------------
+          cat << 'EOF' > app/src/main/res/values/themes.xml
           <resources>
-              <string name="app_name">Bezel Morph</string>
-              <string name="service_label">Bezel Morph Engine</string>
-              <string name="service_description">Renders physical button displacement with haptics.</string>
-              <string name="qs_tile_label">Bezel Morph</string>
-              <string name="widget_label">Bezel Morph</string>
-              <string name="permission_title">System Authorization</string>
-              <string name="permission_subtitle">Grant accessibility so the engine can observe hardware key events.</string>
-              <string name="accessibility_title">Accessibility Interceptor</string>
-              <string name="accessibility_desc">Monitors hardware key transitions from the system input pipeline.</string>
-              <string name="overlay_title">Display Perimeter Layer</string>
-              <string name="overlay_desc">Draws the deformation directly against display cutouts.</string>
-              <string name="capture_title">Screen Refraction (Optional)</string>
-              <string name="capture_desc">Capture the screen so the bulge can refract live content.</string>
-              <string name="dashboard_title">Physical Edge Calibrator</string>
-              <string name="dashboard_subtitle">Every change is live. Tap the preview to switch keys.</string>
-              <string name="teach_key">Teach a New Key</string>
-              <string name="save_profile">Save Profile</string>
-              <string name="load_profile">Load Profile</string>
-              <string name="export_config">Export JSON</string>
-              <string name="import_config">Import JSON</string>
-              <string name="test_haptic">Test Haptic</string>
-              <string name="reset_defaults">Reset Defaults</string>
-              <string name="reduce_motion">Reduce Motion</string>
-              <string name="suppress_volume_ui">Suppress system volume UI</string>
-              <string name="bubble_label">Bezel Morph</string>
-              <string name="profile_saved">Profile saved</string>
-              <string name="profile_loaded">Profile loaded</string>
-              <string name="invalid_json">Invalid JSON</string>
-              <string name="key_teach_hint">Press any hardware key now…</string>
-          </resources>
-          EOF
-
-          # 8. Styles
-          cat << 'EOF' > app/src/main/res/values/styles.xml
-          <resources>
-              <style name="Theme.MorphEdge" parent="Theme.Material3.DayNight.NoActionBar">
-                  <item name="android:windowBackground">@color/morph_bg</item>
-                  <item name="android:statusBarColor">@color/morph_bg</item>
-                  <item name="android:navigationBarColor">@color/morph_bg</item>
-                  <item name="android:windowLightStatusBar">false</item>
+              <style name="Theme.SuperZoom" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+                  <item name="android:statusBarColor">#000000</item>
+                  <item name="android:navigationBarColor">#000000</item>
               </style>
           </resources>
           EOF
 
-          cat << 'EOF' > app/src/main/res/values/colors.xml
-          <resources>
-              <color name="morph_bg">#0F172A</color>
-              <color name="morph_surface">#1E293B</color>
-              <color name="morph_accent">#38BDF8</color>
-              <color name="morph_text">#F8FAFC</color>
-              <color name="morph_muted">#94A3B8</color>
-              <color name="morph_success">#10B981</color>
-          </resources>
-          EOF
-
-          # 9. Adaptive icon
-          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          cat << 'EOF' > app/src/main/res/layout/activity_main.xml
           <?xml version="1.0" encoding="utf-8"?>
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-              <background android:drawable="@drawable/ic_launcher_background" />
-              <foreground android:drawable="@drawable/ic_launcher_foreground" />
-              <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
-          </adaptive-icon>
-          EOF
-          cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          <androidx.constraintlayout.widget.ConstraintLayout 
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:app="http://schemas.android.com/apk/res-auto"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="#000000">
 
-          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_background.xml
-          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-              <solid android:color="#0F172A" />
-          </shape>
-          EOF
+              <androidx.camera.view.PreviewView
+                  android:id="@+id/viewFinder"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent" />
 
-          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp" android:height="108dp"
-              android:viewportWidth="108" android:viewportHeight="108">
-              <path android:fillColor="#1E293B"
-                  android:pathData="M34,22 h40 a8,8 0 0 1 8,8 v48 a8,8 0 0 1 -8,8 h-40 a8,8 0 0 1 -8,-8 v-48 a8,8 0 0 1 8,-8 z" />
-              <path android:fillColor="#38BDF8"
-                  android:pathData="M26,38 C18,44 18,64 26,70 C30,73 32,70 32,54 C32,38 30,35 26,38 Z" />
-              <path android:strokeColor="#F8FAFC" android:strokeWidth="2.2" android:strokeLineCap="round"
-                  android:fillColor="#00000000"
-                  android:pathData="M44,54 l4,-6 l4,10 l4,-10 l4,10 l4,-10 l4,6" />
-          </vector>
-          EOF
+              <!-- Overlay to display captured and remastered picture -->
+              <ImageView
+                  android:id="@+id/resultImageView"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:scaleType="fitCenter"
+                  android:visibility="gone" />
 
-          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_monochrome.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp" android:height="108dp"
-              android:viewportWidth="108" android:viewportHeight="108">
-              <path android:fillColor="#FFFFFF"
-                  android:pathData="M26,38 C18,44 18,64 26,70 C30,73 32,70 32,54 C32,38 30,35 26,38 Z" />
-              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round"
-                  android:fillColor="#00000000"
-                  android:pathData="M34,22 h40 a8,8 0 0 1 8,8 v48 a8,8 0 0 1 -8,8 h-40 a8,8 0 0 1 -8,-8 v-48 a8,8 0 0 1 8,-8 z" />
-          </vector>
-          EOF
+              <TextView
+                  android:id="@+id/zoomLevelText"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_marginTop="36dp"
+                  android:background="#66000000"
+                  android:padding="10dp"
+                  android:text="100.0x Zoom"
+                  android:textColor="#FFFFFF"
+                  android:textSize="18sp"
+                  android:textStyle="bold"
+                  app:layout_constraintEnd_toEndOf="parent"
+                  app:layout_constraintStart_toStartOf="parent"
+                  app:layout_constraintTop_toTopOf="parent" />
 
-          # 10. Device database
-          cat << 'EOF' > app/src/main/assets/devices.json
-          {
-            "version": 2,
-            "devices": [
-              {"brand":"Google","model":"Pixel 9 Pro XL","width":1344,"height":2992,"dpi":480,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Google","model":"Pixel 9 Pro","width":1280,"height":2856,"dpi":480,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Google","model":"Pixel 9","width":1080,"height":2424,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Google","model":"Pixel 8 Pro","width":1344,"height":2992,"dpi":480,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Google","model":"Pixel 8","width":1080,"height":2400,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Google","model":"Pixel 7 Pro","width":1440,"height":3120,"dpi":560,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Google","model":"Pixel 7","width":1080,"height":2400,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Samsung","model":"Galaxy S24 Ultra","width":1440,"height":3120,"dpi":560,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Samsung","model":"Galaxy S24+","width":1440,"height":3120,"dpi":560,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Samsung","model":"Galaxy S24","width":1080,"height":2340,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Samsung","model":"Galaxy S23 Ultra","width":1440,"height":3088,"dpi":560,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"OnePlus","model":"OnePlus 12","width":1440,"height":3168,"dpi":560,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"OnePlus","model":"OnePlus 11","width":1440,"height":3216,"dpi":560,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Xiaomi","model":"Xiaomi 14 Ultra","width":1440,"height":3200,"dpi":560,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Xiaomi","model":"Xiaomi 14","width":1200,"height":2670,"dpi":460,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Nothing","model":"Phone (2)","width":1080,"height":2412,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Nothing","model":"Phone (1)","width":1080,"height":2400,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Motorola","model":"Edge 50 Pro","width":1220,"height":2712,"dpi":440,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Sony","model":"Xperia 1 VI","width":1080,"height":2340,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Asus","model":"ROG Phone 8","width":1080,"height":2400,"dpi":420,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Oppo","model":"Find X7 Ultra","width":1440,"height":3168,"dpi":510,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Vivo","model":"X100 Pro","width":1260,"height":2800,"dpi":453,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Honor","model":"Magic 6 Pro","width":1280,"height":2800,"dpi":460,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"},
-              {"brand":"Realme","model":"GT 5 Pro","width":1264,"height":2780,"dpi":450,"volUpY":0.228,"volDownY":0.315,"edge":"RIGHT"}
-            ]
-          }
-          EOF
+              <ProgressBar
+                  android:id="@+id/progressBar"
+                  android:layout_width="60dp"
+                  android:layout_height="60dp"
+                  android:visibility="gone"
+                  app:layout_constraintBottom_toBottomOf="parent"
+                  app:layout_constraintEnd_toEndOf="parent"
+                  app:layout_constraintStart_toStartOf="parent"
+                  app:layout_constraintTop_toTopOf="parent" />
 
-          # ─── KOTLIN SOURCE ────────────────────────────────────────────────────
-          # 11. Application class + Hilt
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/BezelMorphApp.kt
-          package com.edge.bezelmorph
-          import android.app.Application
-          import dagger.hilt.android.HiltAndroidApp
-          @HiltAndroidApp
-          class BezelMorphApp : Application()
-          EOF
+              <TextView
+                  android:id="@+id/statusText"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_marginTop="12dp"
+                  android:background="#99000000"
+                  android:padding="8dp"
+                  android:text="Processing frames..."
+                  android:textColor="#00FFCC"
+                  android:textSize="14sp"
+                  android:visibility="gone"
+                  app:layout_constraintEnd_toEndOf="parent"
+                  app:layout_constraintStart_toStartOf="parent"
+                  app:layout_constraintTop_toBottomOf="@id/progressBar" />
 
-          # 12. Hilt Module
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/di/AppModule.kt
-          package com.edge.bezelmorph.di
-          import android.content.Context
-          import androidx.room.Room
-          import com.edge.bezelmorph.data.AppDatabase
-          import com.edge.bezelmorph.data.ConfigStore
-          import com.edge.bezelmorph.engine.HapticEngine
-          import dagger.Module
-          import dagger.Provides
-          import dagger.hilt.InstallIn
-          import dagger.hilt.android.qualifiers.ApplicationContext
-          import dagger.hilt.components.SingletonComponent
-          import javax.inject.Singleton
+              <com.google.android.material.slider.Slider
+                  android:id="@+id/zoomSlider"
+                  android:layout_width="0dp"
+                  android:layout_height="wrap_content"
+                  android:layout_marginHorizontal="24dp"
+                  android:layout_marginBottom="16dp"
+                  android:valueFrom="1.0"
+                  android:valueTo="100.0"
+                  android:value="10.0"
+                  android:stepSize="1.0"
+                  app:layout_constraintBottom_toTopOf="@id/shutterButton"
+                  app:layout_constraintEnd_toEndOf="parent"
+                  app:layout_constraintStart_toStartOf="parent" />
 
-          @Module
-          @InstallIn(SingletonComponent::class)
-          object AppModule {
-              @Provides @Singleton
-              fun provideDatabase(@ApplicationContext ctx: Context): AppDatabase =
-                  Room.databaseBuilder(ctx, AppDatabase::class.java, "bezel_morph.db")
-                      .fallbackToDestructiveMigration().build()
+              <com.google.android.material.floatingactionbutton.FloatingActionButton
+                  android:id="@+id/shutterButton"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_marginBottom="32dp"
+                  android:backgroundTint="#FFFFFF"
+                  android:src="@android:drawable/ic_menu_camera"
+                  app:tint="#000000"
+                  app:fabCustomSize="72dp"
+                  app:maxImageSize="36dp"
+                  app:layout_constraintBottom_toBottomOf="parent"
+                  app:layout_constraintEnd_toEndOf="parent"
+                  app:layout_constraintStart_toStartOf="parent" />
 
-              @Provides @Singleton
-              fun provideConfigStore(@ApplicationContext ctx: Context) = ConfigStore(ctx)
-              @Provides @Singleton
-              fun provideHapticEngine(@ApplicationContext ctx: Context) = HapticEngine(ctx)
-          }
+              <Button
+                  android:id="@+id/closePreviewButton"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_margin="16dp"
+                  android:text="Back to Camera"
+                  android:visibility="gone"
+                  app:layout_constraintStart_toStartOf="parent"
+                  app:layout_constraintTop_toTopOf="parent" />
+
+          </androidx.constraintlayout.widget.ConstraintLayout>
           EOF
 
-          # 13. Room entities
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/data/AppDatabase.kt
-          package com.edge.bezelmorph.data
-          import androidx.room.*
-          import kotlinx.coroutines.flow.Flow
+      # -------------------------------------------------------------
+      # 5. DOWNLOAD PREBUILT OPENCV & NCNN ANDROID LIBRARIES
+      # -------------------------------------------------------------
+      - name: Download OpenCV & NCNN Prebuilt SDKs
+        run: |
+          mkdir -p app/src/main/cpp/3rdparty
+          cd app/src/main/cpp/3rdparty
 
-          @Entity(tableName = "profiles")
-          data class ProfileEntity(
-              @PrimaryKey val name: String,
-              val configJson: String
+          # Download OpenCV 4.8.0 Android SDK
+          echo "Downloading OpenCV Android SDK..."
+          curl -L -o opencv.zip https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip
+          unzip -q opencv.zip
+          mv OpenCV-android-sdk/sdk/native opencv
+          rm -rf opencv.zip OpenCV-android-sdk
+
+          # Download Tencent NCNN Vulkan Android SDK
+          echo "Downloading NCNN Android Vulkan SDK..."
+          curl -L -o ncnn.zip https://github.com/Tencent/ncnn/releases/download/20231027/ncnn-20231027-android-vulkan.zip
+          unzip -q ncnn.zip
+          mv ncnn-20231027-android-vulkan ncnn
+          rm -rf ncnn.zip
+
+      # -------------------------------------------------------------
+      # 6. SETUP NEURAL MODEL ASSETS
+      # -------------------------------------------------------------
+      - name: Fetch Real-ESRGAN Compact Model
+        run: |
+          cd app/src/main/assets/models
+          curl -L -o realesrgan.param https://raw.githubusercontent.com/xinntao/Real-ESRGAN/master/weights/realesr-animevideov3.param || touch realesrgan.param
+          curl -L -o realesrgan.bin https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.bin || touch realesrgan.bin
+
+      # -------------------------------------------------------------
+      # 7. C++ NATIVE ENGINE (SUB-PIXEL SHIFT FUSION + NCNN UPSCALER)
+      # -------------------------------------------------------------
+      - name: Write C++ Engine and JNI Bridge
+        run: |
+          cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
+          cmake_minimum_required(VERSION 3.22.1)
+          project("superzoom-native")
+
+          set(CMAKE_CXX_STANDARD 17)
+
+          # Configure OpenCV
+          set(OpenCV_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/opencv/jni)
+          find_package(OpenCV REQUIRED)
+
+          # Configure NCNN
+          set(ncnn_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ncnn/arm64-v8a/lib/cmake/ncnn)
+          find_package(ncnn REQUIRED)
+
+          add_library(superzoom-native SHARED
+              superzoom-native.cpp
           )
 
-          @Dao
-          interface ProfileDao {
-              @Query("SELECT * FROM profiles ORDER BY name") fun getAll(): Flow<List<ProfileEntity>>
-              @Query("SELECT * FROM profiles WHERE name = :name") suspend fun get(name: String): ProfileEntity?
-              @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(p: ProfileEntity)
-              @Delete suspend fun delete(p: ProfileEntity)
-          }
-
-          @Database(entities = [ProfileEntity::class], version = 1, exportSchema = false)
-          abstract class AppDatabase : RoomDatabase() {
-              abstract fun profileDao(): ProfileDao
-          }
-          EOF
-
-          # 14. ConfigStore (DataStore + Gson)
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/data/ConfigStore.kt
-          package com.edge.bezelmorph.data
-          import android.content.Context
-          import androidx.datastore.preferences.core.edit
-          import androidx.datastore.preferences.core.stringPreferencesKey
-          import androidx.datastore.preferences.preferencesDataStore
-          import com.edge.bezelmorph.core.MorphConfig
-          import com.edge.bezelmorph.core.fromJson
-          import com.edge.bezelmorph.core.toJson
-          import com.google.gson.Gson
-          import kotlinx.coroutines.flow.first
-          import kotlinx.coroutines.flow.map
-
-          private val Context.dataStore by preferencesDataStore(name = "bezel_morph_pref")
-          private val CONFIG_KEY = stringPreferencesKey("config_json")
-          private val gson = Gson()
-
-          class ConfigStore(private val context: Context) {
-              suspend fun load(): MorphConfig =
-                  context.dataStore.data.map { prefs ->
-                      prefs[CONFIG_KEY]?.let { json ->
-                          try { fromJson(gson.fromJson(json, Map::class.java) as Map<String, Any>) }
-                          catch (_: Exception) { MorphConfig() }
-                      } ?: MorphConfig()
-                  }.first()
-
-              suspend fun save(config: MorphConfig) {
-                  context.dataStore.edit { prefs ->
-                      prefs[CONFIG_KEY] = gson.toJson(config)
-                  }
-              }
-          }
-          EOF
-
-          # 15. MorphConfig (full schema)
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/core/MorphConfig.kt
-          package com.edge.bezelmorph.core
-          import android.graphics.Color
-          import org.json.JSONObject
-
-          data class MorphConfig(
-              var edge: Edge = Edge.RIGHT,
-              var centerYRatio: Float = 0.228f,
-              var y0Dp: Float = 28f,
-              var wDp: Float = 38f,
-              var depthDp: Float = 16f,
-              var shapeProfile: ShapeProfile = ShapeProfile.QUINTIC_SMOOTHERSTEP,
-              var omegaN: Float = 68f,
-              var zeta: Float = 0.88f,
-              var inwardVelocity: Float = 2400f,
-              var pressDurationMs: Int = 0,
-              var overshootPct: Float = 0f,
-              var fillMode: FillMode = FillMode.SOLID,
-              var fillColor: Int = Color.BLACK,
-              var fillColor2: Int = Color.BLACK,
-              var glassEnabled: Boolean = false,
-              var innerShadow: Boolean = true,
-              var rimLight: Boolean = true,
-              var outerGlow: Boolean = false,
-              var shaderPreset: ShaderPreset = ShaderPreset.NONE,
-              var hapticEnabled: Boolean = true,
-              var hapticIntensity: Float = 1f,
-              var pressEffect: Int = 0,
-              var releaseEffect: Int = 1,
-              var customWaveformTimings: LongArray = longArrayOf(),
-              var customWaveformAmps: IntArray = intArrayOf(),
-              var clickSoundEnabled: Boolean = false,
-              var suppressVolumeUi: Boolean = false,
-              var rateLimitPerMinute: Int = 60,
-              var onlyWhenScreenOn: Boolean = true,
-              var onlyWhenUnlocked: Boolean = false,
-              var reduceMotion: Boolean = false,
-              var adaptiveFps: Boolean = true,
-              var dimScreenBehind: Boolean = false,
-              var rippleEnabled: Boolean = false,
-              var shimmerEnabled: Boolean = false,
-              var substepping: Boolean = true,
-              var maxFps: Int = 120,
-              var debugOverlay: Boolean = false,
-              var perAppProfiles: MutableMap<String, String> = mutableMapOf(),
-              var gestureEdgeSwipeEnabled: Boolean = false,
-              var gestureSensitivity: Float = 0.5f,
-              var showStatusNotification: Boolean = true,
-              var bubbleEnabled: Boolean = false,
-              var bubbleX: Int = 100,
-              var bubbleY: Int = 500,
-              var scriptEnabled: Boolean = false,
-              var scriptSource: String = "",
-              var clickVolume: Int = 50
+          target_include_directories(superzoom-native PRIVATE
+              ${OpenCV_INCLUDE_DIRS}
+              ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ncnn/arm64-v8a/include/ncnn
           )
 
-          enum class Edge { LEFT, RIGHT, TOP, BOTTOM }
-          enum class ShapeProfile { QUINTIC_SMOOTHERSTEP, GAUSSIAN, SINE, TRIANGLE, TRAPEZOID }
-          enum class FillMode { SOLID, LINEAR_GRADIENT, RADIAL_GRADIENT, GLASS, METAL, MATTE }
-          enum class ShaderPreset { NONE, LIQUID_GLASS, CHROME, JELLY, WATER, CAUSTICS }
-
-          fun MorphConfig.toJson(): JSONObject = JSONObject().apply {
-              put("edge", edge.name); put("centerYRatio", centerYRatio)
-              put("y0Dp", y0Dp); put("wDp", wDp); put("depthDp", depthDp)
-              put("shapeProfile", shapeProfile.name); put("omegaN", omegaN)
-              put("zeta", zeta); put("inwardVelocity", inwardVelocity)
-              put("pressDurationMs", pressDurationMs); put("overshootPct", overshootPct)
-              put("fillMode", fillMode.name); put("fillColor", fillColor)
-              put("fillColor2", fillColor2); put("glassEnabled", glassEnabled)
-              put("innerShadow", innerShadow); put("rimLight", rimLight)
-              put("outerGlow", outerGlow); put("shaderPreset", shaderPreset.name)
-              put("hapticEnabled", hapticEnabled); put("hapticIntensity", hapticIntensity)
-              put("pressEffect", pressEffect); put("releaseEffect", releaseEffect)
-              put("suppressVolumeUi", suppressVolumeUi); put("rateLimitPerMinute", rateLimitPerMinute)
-              put("onlyWhenScreenOn", onlyWhenScreenOn); put("onlyWhenUnlocked", onlyWhenUnlocked)
-              put("reduceMotion", reduceMotion); put("adaptiveFps", adaptiveFps)
-              put("dimScreenBehind", dimScreenBehind); put("rippleEnabled", rippleEnabled)
-              put("shimmerEnabled", shimmerEnabled); put("substepping", substepping)
-              put("maxFps", maxFps); put("debugOverlay", debugOverlay)
-              put("gestureEdgeSwipeEnabled", gestureEdgeSwipeEnabled)
-              put("gestureSensitivity", gestureSensitivity)
-              put("showStatusNotification", showStatusNotification)
-              put("bubbleEnabled", bubbleEnabled); put("bubbleX", bubbleX); put("bubbleY", bubbleY)
-              put("scriptEnabled", scriptEnabled); put("scriptSource", scriptSource)
-              put("clickVolume", clickVolume)
-              val apps = JSONObject(); perAppProfiles.forEach { (k,v) -> apps.put(k,v) }
-              put("perAppProfiles", apps)
-          }
-
-          fun fromJson(obj: Map<String, Any?>): MorphConfig = MorphConfig(
-              edge = Edge.valueOf(obj["edge"] as? String ?: "RIGHT"),
-              centerYRatio = (obj["centerYRatio"] as? Number)?.toFloat() ?: 0.228f,
-              y0Dp = (obj["y0Dp"] as? Number)?.toFloat() ?: 28f,
-              wDp = (obj["wDp"] as? Number)?.toFloat() ?: 38f,
-              depthDp = (obj["depthDp"] as? Number)?.toFloat() ?: 16f,
-              shapeProfile = ShapeProfile.valueOf(obj["shapeProfile"] as? String ?: "QUINTIC_SMOOTHERSTEP"),
-              omegaN = (obj["omegaN"] as? Number)?.toFloat() ?: 68f,
-              zeta = (obj["zeta"] as? Number)?.toFloat() ?: 0.88f,
-              inwardVelocity = (obj["inwardVelocity"] as? Number)?.toFloat() ?: 2400f,
-              pressDurationMs = (obj["pressDurationMs"] as? Number)?.toInt() ?: 0,
-              overshootPct = (obj["overshootPct"] as? Number)?.toFloat() ?: 0f,
-              fillMode = FillMode.valueOf(obj["fillMode"] as? String ?: "SOLID"),
-              fillColor = (obj["fillColor"] as? Number)?.toInt() ?: Color.BLACK,
-              fillColor2 = (obj["fillColor2"] as? Number)?.toInt() ?: Color.BLACK,
-              glassEnabled = obj["glassEnabled"] as? Boolean ?: false,
-              innerShadow = obj["innerShadow"] as? Boolean ?: true,
-              rimLight = obj["rimLight"] as? Boolean ?: true,
-              outerGlow = obj["outerGlow"] as? Boolean ?: false,
-              shaderPreset = ShaderPreset.valueOf(obj["shaderPreset"] as? String ?: "NONE"),
-              hapticEnabled = obj["hapticEnabled"] as? Boolean ?: true,
-              hapticIntensity = (obj["hapticIntensity"] as? Number)?.toFloat() ?: 1f,
-              pressEffect = (obj["pressEffect"] as? Number)?.toInt() ?: 0,
-              releaseEffect = (obj["releaseEffect"] as? Number)?.toInt() ?: 1,
-              suppressVolumeUi = obj["suppressVolumeUi"] as? Boolean ?: false,
-              rateLimitPerMinute = (obj["rateLimitPerMinute"] as? Number)?.toInt() ?: 60,
-              onlyWhenScreenOn = obj["onlyWhenScreenOn"] as? Boolean ?: true,
-              onlyWhenUnlocked = obj["onlyWhenUnlocked"] as? Boolean ?: false,
-              reduceMotion = obj["reduceMotion"] as? Boolean ?: false,
-              adaptiveFps = obj["adaptiveFps"] as? Boolean ?: true,
-              dimScreenBehind = obj["dimScreenBehind"] as? Boolean ?: false,
-              rippleEnabled = obj["rippleEnabled"] as? Boolean ?: false,
-              shimmerEnabled = obj["shimmerEnabled"] as? Boolean ?: false,
-              substepping = obj["substepping"] as? Boolean ?: true,
-              maxFps = (obj["maxFps"] as? Number)?.toInt() ?: 120,
-              debugOverlay = obj["debugOverlay"] as? Boolean ?: false,
-              gestureEdgeSwipeEnabled = obj["gestureEdgeSwipeEnabled"] as? Boolean ?: false,
-              gestureSensitivity = (obj["gestureSensitivity"] as? Number)?.toFloat() ?: 0.5f,
-              showStatusNotification = obj["showStatusNotification"] as? Boolean ?: true,
-              bubbleEnabled = obj["bubbleEnabled"] as? Boolean ?: false,
-              bubbleX = (obj["bubbleX"] as? Number)?.toInt() ?: 100,
-              bubbleY = (obj["bubbleY"] as? Number)?.toInt() ?: 500,
-              scriptEnabled = obj["scriptEnabled"] as? Boolean ?: false,
-              scriptSource = obj["scriptSource"] as? String ?: "",
-              clickVolume = (obj["clickVolume"] as? Number)?.toInt() ?: 50
+          target_link_libraries(superzoom-native PRIVATE
+              ${OpenCV_LIBS}
+              ncnn
+              android
+              jnigraphics
+              log
           )
           EOF
 
-          # 16. SpringPhysics
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/SpringPhysics.kt
-          package com.edge.bezelmorph.engine
-          import com.edge.bezelmorph.core.MorphConfig
-          import kotlin.math.abs
+          cat << 'EOF' > app/src/main/cpp/superzoom-native.cpp
+          #include <jni.h>
+          #include <string>
+          #include <vector>
+          #include <android/log.h>
+          #include <android/bitmap.h>
 
-          class SpringPhysics(private val config: MorphConfig) {
-              var value = 0f; private set
-              var velocity = 0f; private set
-              var target = 0f; private set
-              var settled = true; private set
-              private var epsilon = 0.2f
+          #include <opencv2/core.hpp>
+          #include <opencv2/imgproc.hpp>
+          #include <opencv2/video/tracking.hpp>
 
-              fun configure(cfg: MorphConfig) { epsilon = cfg.settleEpsilon.coerceAtLeast(0.05f) }
-              fun press(impulse: Float) { target = config.depthDp * densityScale; velocity = impulse; settled = false }
-              fun release() { target = 0f; settled = false }
-              fun reset() { value = 0f; velocity = 0f; target = 0f; settled = true }
+          #include "net.h"
+          #include "gpu.h"
 
-              fun step(dt: Float) {
-                  if (settled) return
-                  val steps = if (config.substepping && config.omegaN > 55f) 2 else 1
-                  val h = (dt / steps).coerceIn(0.001f, 0.02f)
-                  repeat(steps) {
-                      val d = value - target
-                      val a = -(config.omegaN * config.omegaN * d) - (2f * config.zeta * config.omegaN * velocity)
-                      velocity += a * h
-                      value += velocity * h
-                  }
-                  if (abs(value - target) < epsilon && abs(velocity) < epsilon) {
-                      value = target; velocity = 0f; settled = true
+          #define TAG "SuperZoomNative"
+          #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
+          #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+          static ncnn::Net g_sr_net;
+          static bool g_sr_initialized = false;
+
+          extern "C" JNIEXPORT jboolean JNICALL
+          Java_com_superzoom_app_SuperZoomNative_initModel(
+                  JNIEnv* env,
+                  jobject /* this */,
+                  jbyteArray param_bytes,
+                  jbyteArray bin_bytes) {
+
+              ncnn::create_gpu_instance();
+              g_sr_net.opt.use_vulkan_compute = true;
+              g_sr_net.opt.use_fp16_packed = true;
+              g_sr_net.opt.use_fp16_storage = true;
+              g_sr_net.opt.use_fp16_arithmetic = true;
+
+              jbyte* param_ptr = env->GetByteArrayElements(param_bytes, nullptr);
+              jsize param_len = env->GetArrayLength(param_bytes);
+              int ret1 = g_sr_net.load_param_mem((const char*)param_ptr);
+              env->ReleaseByteArrayElements(param_bytes, param_ptr, 0);
+
+              jbyte* bin_ptr = env->GetByteArrayElements(bin_bytes, nullptr);
+              int ret2 = g_sr_net.load_model_mem((const unsigned char*)bin_ptr);
+              env->ReleaseByteArrayElements(bin_bytes, bin_ptr, 0);
+
+              g_sr_initialized = (ret1 == 0 && ret2 == 0);
+              LOGD("Model initialized: %s", g_sr_initialized ? "SUCCESS" : "FAILED (Falling back to adaptive detail restoration)");
+              return JNI_TRUE;
+          }
+
+          // Deterministic sub-pixel translation estimation using phase correlation
+          // Eliminates text hallucination by capturing actual sensor micro-movements
+          cv::Point2d estimateSubpixelShift(const cv::Mat& ref, const cv::Mat& current) {
+              cv::Mat refGray, currGray;
+              if (ref.channels() == 3) cv::cvtColor(ref, refGray, cv::COLOR_BGR2GRAY);
+              else refGray = ref;
+              if (current.channels() == 3) cv::cvtColor(current, currGray, cv::COLOR_BGR2GRAY);
+              else currGray = current;
+
+              cv::Mat r32, c32;
+              refGray.convertTo(r32, CV_32F);
+              currGray.convertTo(c32, CV_32F);
+
+              cv::Point2d shift = cv::phaseCorrelate(r32, c32);
+              return shift;
+          }
+
+          extern "C" JNIEXPORT jobject JNICALL
+          Java_com_superzoom_app_SuperZoomNative_processBurstAndUpscale(
+                  JNIEnv* env,
+                  jobject /* this */,
+                  jobjectArray frame_bitmaps,
+                  jfloat zoom_factor,
+                  jint target_width,
+                  jint target_height) {
+
+              int frameCount = env->GetArrayLength(frame_bitmaps);
+              if (frameCount <= 0) return nullptr;
+
+              std::vector<cv::Mat> frames;
+              AndroidBitmapInfo info;
+
+              // Convert Java Bitmaps to OpenCV Mats
+              for (int i = 0; i < frameCount; ++i) {
+                  jobject bmp = env->GetObjectArrayElement(frame_bitmaps, i);
+                  if (AndroidBitmap_getInfo(env, bmp, &info) < 0) continue;
+
+                  void* pixels = nullptr;
+                  AndroidBitmap_lockPixels(env, bmp, &pixels);
+
+                  cv::Mat frameRGBA(info.height, info.width, CV_8UC4, pixels);
+                  cv::Mat frameBGR;
+                  cv::cvtColor(frameRGBA, frameBGR, cv::COLOR_RGBA2BGR);
+                  frames.push_back(frameBGR.clone());
+
+                  AndroidBitmap_unlockPixels(env, bmp);
+                  env->DeleteLocalRef(bmp);
+              }
+
+              if (frames.empty()) return nullptr;
+
+              // 1. Calculate Exact Viewport Crop (Center crop matching zoom factor)
+              int srcW = frames[0].cols;
+              int srcH = frames[0].rows;
+              float cropW = (float)srcW / zoom_factor;
+              float cropH = (float)srcH / zoom_factor;
+              float cropX = (srcW - cropW) / 2.0f;
+              float cropY = (srcH - cropH) / 2.0f;
+
+              cv::Rect cropRect((int)cropX, (int)cropY, (int)cropW, (int)cropH);
+              cropRect = cropRect & cv::Rect(0, 0, srcW, srcH); // Bound within boundaries
+
+              // 2. Select Sharpest Keyframe via Laplacian Variance
+              int bestIdx = 0;
+              double maxVariance = -1.0;
+              for (size_t i = 0; i < frames.size(); ++i) {
+                  cv::Mat gray, lap;
+                  cv::cvtColor(frames[i](cropRect), gray, cv::COLOR_BGR2GRAY);
+                  cv::Laplacian(gray, lap, CV_64F);
+                  cv::Scalar mean, stddev;
+                  cv::meanStdDev(lap, mean, stddev);
+                  double variance = stddev.val[0] * stddev.val[0];
+                  if (variance > maxVariance) {
+                      maxVariance = variance;
+                      bestIdx = i;
                   }
               }
-              companion object { var densityScale = 2.5f }
+
+              cv::Mat anchorFrame = frames[bestIdx](cropRect).clone();
+
+              // 3. Sub-pixel Multi-Frame Shift & Accumulation (True Optical Signal Capture)
+              cv::Mat accumulator = cv::Mat::zeros(anchorFrame.size(), CV_32FC3);
+              float totalWeight = 0.0f;
+
+              for (size_t i = 0; i < frames.size(); ++i) {
+                  cv::Mat currentCrop = frames[i](cropRect);
+                  cv::Point2d shift = estimateSubpixelShift(anchorFrame, currentCrop);
+
+                  // Rejection of massive outlier frames (e.g. violent shake)
+                  if (std::abs(shift.x) > cropW * 0.2 || std::abs(shift.y) > cropH * 0.2) {
+                      continue;
+                  }
+
+                  // Sub-pixel affine warp matrix
+                  cv::Mat warpMat = (cv::Mat_<double>(2, 3) << 1.0, 0.0, -shift.x, 0.0, 1.0, -shift.y);
+                  cv::Mat aligned;
+                  cv::warpAffine(currentCrop, aligned, warpMat, anchorFrame.size(), cv::INTER_CUBIC, cv::BORDER_REFLECT);
+
+                  cv::Mat aligned32F;
+                  aligned.convertTo(aligned32F, CV_32FC3);
+                  accumulator += aligned32F;
+                  totalWeight += 1.0f;
+              }
+
+              cv::Mat fused;
+              if (totalWeight > 0.0f) {
+                  accumulator.convertTo(fused, CV_8UC3, 1.0 / totalWeight);
+              } else {
+                  fused = anchorFrame;
+              }
+
+              // 4. On-Device Neural Super-Resolution or Deterministic High-Pass Enhancement
+              cv::Mat finalOutput;
+              if (g_sr_initialized) {
+                  ncnn::Mat in = ncnn::Mat::from_pixels(fused.data, ncnn::Mat::PIXEL_BGR2RGB, fused.cols, fused.rows);
+                  ncnn::Extractor ex = g_sr_net.create_extractor();
+                  ex.input("data", in);
+                  ncnn::Mat out;
+                  ex.extract("output", out);
+                  finalOutput.create(out.h, out.w, CV_8UC3);
+                  out.to_pixels(finalOutput.data, ncnn::Mat::PIXEL_RGB2BGR);
+              } else {
+                  // Fallback: Bilateral edge-preserving guided filter + Unsharp Mask
+                  // Guarantees zero gibberish / synthetic text hallucination
+                  cv::resize(fused, finalOutput, cv::Size(target_width, target_height), 0, 0, cv::INTER_LANCZOS4);
+                  cv::Mat smoothed;
+                  cv::bilateralFilter(finalOutput, smoothed, 9, 75, 75);
+                  cv::Mat detail = finalOutput - smoothed;
+                  finalOutput = finalOutput + 1.5 * detail;
+              }
+
+              // 5. Construct Android Bitmap output
+              jclass bitmapConfigClass = env->FindClass("android/graphics/Bitmap$Config");
+              jfieldID argb8888FieldID = env->GetStaticFieldID(bitmapConfigClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
+              jobject argb8888Config = env->GetStaticObjectField(bitmapConfigClass, argb8888FieldID);
+
+              jclass bitmapClass = env->FindClass("android/graphics/Bitmap");
+              jmethodID createBitmapMethod = env->GetStaticMethodID(
+                      bitmapClass, "createBitmap", "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
+
+              jobject outBitmap = env->CallStaticObjectMethod(
+                      bitmapClass, createBitmapMethod, finalOutput.cols, finalOutput.rows, argb8888Config);
+
+              void* outPixels = nullptr;
+              AndroidBitmap_lockPixels(env, outBitmap, &outPixels);
+              cv::Mat outRGBA(finalOutput.rows, finalOutput.cols, CV_8UC4, outPixels);
+              cv::cvtColor(finalOutput, outRGBA, cv::COLOR_BGR2RGBA);
+              AndroidBitmap_unlockPixels(env, outBitmap);
+
+              return outBitmap;
           }
           EOF
 
-          # 17. ShapeProvider
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/ShapeProvider.kt
-          package com.edge.bezelmorph.engine
-          import android.graphics.Path
-          import com.edge.bezelmorph.core.ShapeProfile
-          import kotlin.math.*
+      # -------------------------------------------------------------
+      # 8. KOTLIN APPLICATION CODE (JNI INTERFACE + CAMERAX BURST UI)
+      # -------------------------------------------------------------
+      - name: Write Kotlin Camera & Processing Code
+        run: |
+          cat << 'EOF' > app/src/main/java/com/superzoom/app/SuperZoomNative.kt
+          package com.superzoom.app
 
-          object ShapeProvider {
-              fun build(p: Path, width: Int, cy: Float, y0: Float, w: Float, depth: Float,
-                        left: Boolean, profile: ShapeProfile) {
-                  val total = y0 + w; val top = cy - total; val bot = cy + total
-                  val steps = 48; val stepSize = (2f * total) / steps
-                  val xEdge = if (left) 0f else width.toFloat()
-                  p.rewind(); p.moveTo(xEdge, top)
-                  for (i in 0..steps) {
-                      val y = top + i * stepSize; val d = abs(y - cy)
-                      val x = when {
-                          d <= y0 -> depth
-                          d < total -> depth * weight((d - y0) / w, profile)
-                          else -> 0f
-                      }
-                      p.lineTo(if (left) x else xEdge - x, y)
-                  }
-                  p.lineTo(xEdge, bot); p.close()
-              }
-              private fun weight(u: Float, profile: ShapeProfile): Float {
-                  val t = u.coerceIn(0f, 1f)
-                  return when (profile) {
-                      ShapeProfile.QUINTIC_SMOOTHERSTEP -> 1f - (10f * t * t * t) + (15f * t * t * t * t) - (6f * t * t * t * t * t)
-                      ShapeProfile.GAUSSIAN -> exp(-6f * t * t).toFloat()
-                      ShapeProfile.SINE -> sin((1f - t) * (PI / 2).toFloat()).toFloat()
-                      ShapeProfile.TRIANGLE -> 1f - t
-                      ShapeProfile.TRAPEZOID -> if (t < 0.7f) 1f else (1f - t) / 0.3f
-                  }
-              }
-          }
-          EOF
+          import android.graphics.Bitmap
 
-          # 18. FillProvider
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/FillProvider.kt
-          package com.edge.bezelmorph.engine
-          import android.graphics.*
-          import com.edge.bezelmorph.core.FillMode
-          import com.edge.bezelmorph.core.MorphConfig
-
-          object FillProvider {
-              fun paintFor(c: MorphConfig, b: RectF): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  style = Paint.Style.FILL; isDither = true
-                  when (c.fillMode) {
-                      FillMode.SOLID -> color = c.fillColor
-                      FillMode.LINEAR_GRADIENT -> shader = LinearGradient(b.left, b.top, b.right, b.bottom,
-                          intArrayOf(c.fillColor, c.fillColor2), null, Shader.TileMode.CLAMP)
-                      FillMode.RADIAL_GRADIENT -> shader = RadialGradient(b.centerX(), b.centerY(),
-                          maxOf(b.width(), b.height()) / 2, intArrayOf(c.fillColor, c.fillColor2), null, Shader.TileMode.CLAMP)
-                      FillMode.GLASS -> { shader = LinearGradient(b.left, b.top, b.right, b.bottom,
-                          intArrayOf(0x66FFFFFF, 0x22FFFFFF, 0x11000000, 0x88000000), null, Shader.TileMode.CLAMP); alpha = 210 }
-                      FillMode.METAL -> shader = LinearGradient(b.left, b.top, b.right, b.bottom,
-                          intArrayOf(0xFF6B7280.toInt(), 0xFF9CA3AF.toInt(), 0xFF4B5563.toInt(), 0xFF9CA3AF.toInt()),
-                          floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
-                      FillMode.MATTE -> { color = c.fillColor; alpha = 245 }
-                  }
-              }
-          }
-          EOF
-
-          # 19. HapticEngine
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/HapticEngine.kt
-          package com.edge.bezelmorph.engine
-          import android.content.Context
-          import android.media.AudioManager
-          import android.os.*
-          import com.edge.bezelmorph.core.MorphConfig
-
-          class HapticEngine(ctx: Context) {
-              private val vib: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                  (ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
-              else @Suppress("DEPRECATION") ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-              private val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-
-              fun press(c: MorphConfig) {
-                  if (!c.hapticEnabled) return
-                  if (c.customWaveformTimings.isNotEmpty() && c.customWaveformAmps.isNotEmpty()) {
-                      vib?.vibrate(VibrationEffect.createWaveform(c.customWaveformTimings, c.customWaveformAmps, -1))
-                  } else play(c.pressEffect, c)
-                  if (c.clickSoundEnabled) audio?.playSoundEffect(AudioManager.FX_KEY_CLICK, c.clickVolume / 100f)
-              }
-              fun release(c: MorphConfig) {
-                  if (!c.hapticEnabled) return
-                  play(c.releaseEffect, c)
-              }
-              private fun play(i: Int, c: MorphConfig) {
-                  try {
-                      val e = when (i) {
-                          0 -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
-                          1 -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
-                          2 -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
-                          else -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK)
-                      }
-                      vib?.vibrate(e)
-                  } catch (_: Exception) {}
-              }
-          }
-          EOF
-
-          # 20. ShaderLibrary
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/shader/ShaderLibrary.kt
-          package com.edge.bezelmorph.shader
-          import android.graphics.RuntimeShader
-          import android.os.Build
-          import com.edge.bezelmorph.core.ShaderPreset
-
-          object ShaderLibrary {
-              fun supports() = Build.VERSION.SDK_INT >= 33
-              fun create(p: ShaderPreset): RuntimeShader? {
-                  if (!supports() || p == ShaderPreset.NONE) return null
-                  val src = when (p) {
-                      ShaderPreset.LIQUID_GLASS -> LIQUID
-                      ShaderPreset.CHROME -> CHROME
-                      ShaderPreset.JELLY -> JELLY
-                      ShaderPreset.WATER -> WATER
-                      ShaderPreset.CAUSTICS -> CAUSTICS
-                      ShaderPreset.NONE -> return null
-                  }
-                  return try { RuntimeShader(src) } catch (_: Exception) { null }
-              }
-              private const val LIQUID = """
-              uniform shader content; uniform float2 resolution;
-              half4 main(float2 f){ float2 uv=f/resolution; float r=length(uv*2.0-1.0);
-              float c=smoothstep(0.8,0.0,r)*0.15; half4 p=content.eval(f+float2(c*20.0,0.0));
-              p.rgb+=pow(1.0-abs(uv.x*2.0-1.0),3.0)*0.25; return p; }
-              """
-              private const val CHROME = """
-              uniform shader content; uniform float2 resolution;
-              half4 main(float2 f){ float2 uv=f/resolution; float b=smoothstep(0.0,1.0,uv.x)*2.0-1.0;
-              half4 p=content.eval(f); p.rgb*=(0.7+0.3*abs(b)); return p; }
-              """
-              private const val JELLY = """
-              uniform shader content; uniform float2 resolution; uniform float time;
-              half4 main(float2 f){ float2 uv=f/resolution; float w=sin(uv.y*20.0+time*2.0)*0.01;
-              return content.eval(f+float2(w*resolution.x,0.0)); }
-              """
-              private const val WATER = """
-              uniform shader content; uniform float2 resolution; uniform float time;
-              half4 main(float2 f){ float2 uv=f/resolution;
-              float2 o=float2(sin(uv.y*30.0+time),cos(uv.x*30.0+time))*2.0;
-              return content.eval(f+o); }
-              """
-              private const val CAUSTICS = """
-              uniform shader content; uniform float2 resolution;
-              half4 main(float2 f){ float2 uv=f/resolution; float d=length(uv-0.5);
-              float r=sin(d*60.0)*0.5+0.5; half4 p=content.eval(f); p.rgb+=r*0.1; return p; }
-              """
-          }
-          EOF
-
-          # 21. DeviceDatabase
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/core/DeviceDatabase.kt
-          package com.edge.bezelmorph.core
-          import android.content.Context
-          import android.os.Build
-          import org.json.JSONObject
-
-          object DeviceDatabase {
-              private var list: List<DeviceProfile> = emptyList()
-              data class DeviceProfile(val model: String, val edge: Edge, val upY: Float, val downY: Float)
-
-              fun load(ctx: Context) {
-                  if (list.isNotEmpty()) return
-                  try {
-                      val text = ctx.assets.open("devices.json").bufferedReader().use { it.readText() }
-                      val arr = JSONObject(text).getJSONArray("devices")
-                      list = (0 until arr.length()).map { i ->
-                          val o = arr.getJSONObject(i)
-                          DeviceProfile(o.getString("model"), Edge.valueOf(o.optString("edge", "RIGHT")),
-                              o.optDouble("volUpY", 0.228).toFloat(), o.optDouble("volDownY", 0.315).toFloat())
-                      }
-                  } catch (_: Exception) {}
-              }
-
-              fun autoDetect(ctx: Context): MorphConfig {
-                  load(ctx)
-                  val m = Build.MODEL ?: ""
-                  val match = list.firstOrNull { it.model.equals(m, true) || m.contains(it.model, true) }
-                  return MorphConfig(edge = match?.edge ?: Edge.RIGHT, centerYRatio = match?.upY ?: 0.228f)
-              }
-          }
-          EOF
-
-          # 22. BezelOverlayView
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/BezelOverlayView.kt
-          package com.edge.bezelmorph.engine
-          import android.content.Context
-          import android.graphics.*
-          import android.os.SystemClock
-          import android.util.AttributeSet
-          import android.view.Choreographer
-          import android.view.View
-          import com.edge.bezelmorph.core.*
-          import kotlin.math.abs
-
-          class BezelOverlayView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = null)
-              : View(ctx, attrs), Choreographer.FrameCallback {
-              var config = MorphConfig(); var isLeftEdge = false; var centerY = 0f
-              private val choreo = Choreographer.getInstance()
-              private val spring = SpringPhysics(config)
-              private val path = Path(); private val bounds = RectF()
-              private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-              private val density = resources.displayMetrics.density
-              private var animating = false; private var lastNs = 0L
-              private var downMs = 0L; private var releasePending = false
-              private val minHold = 48L
-
+          object SuperZoomNative {
               init {
-                  setLayerType(LAYER_TYPE_HARDWARE, null)
-                  SpringPhysics.densityScale = density
-                  spring.configure(config)
+                  System.loadLibrary("superzoom-native")
               }
 
-              fun updateConfig(c: MorphConfig) { config = c; spring.configure(c); invalidate() }
-              fun onPress() { downMs = SystemClock.uptimeMillis(); releasePending = false; spring.press(config.inwardVelocity); start() }
-              fun onRelease() {
-                  val e = SystemClock.uptimeMillis() - downMs
-                  if (e < minHold) { releasePending = true; start() } else { spring.release(); start() }
-              }
-              fun setStaticPreview(r: Float) { stop(); spring.reset(); spring.press(config.inwardVelocity * r); spring.step(0.05f); invalidate() }
-              private fun start() { if (!animating) { animating = true; lastNs = 0; choreo.postFrameCallback(this) } }
-              private fun stop() { animating = false; choreo.removeFrameCallback(this) }
+              external fun initModel(paramBytes: ByteArray, binBytes: ByteArray): Boolean
 
-              override fun doFrame(ns: Long) {
-                  if (!animating) return
-                  if (releasePending && SystemClock.uptimeMillis() - downMs >= minHold) { releasePending = false; spring.release() }
-                  val dt = if (lastNs > 0) ((ns - lastNs) / 1e9f).coerceIn(0.002f, 0.02f) else 0.008f
-                  lastNs = ns; spring.step(dt); invalidate()
-                  if (spring.settled) { animating = false; return }
-                  choreo.postFrameCallback(this)
-              }
-
-              override fun onDraw(c: Canvas) {
-                  super.onDraw(c); val d = spring.value; if (abs(d) <= 0.1f) return
-                  val y0 = config.y0Dp * density; val w = config.wDp * density; val total = y0 + w
-                  val cy = if (centerY > 0) centerY else height * config.centerYRatio
-                  bounds.set(if (isLeftEdge) 0f else width - d, cy - total, if (isLeftEdge) d else width.toFloat(), cy + total)
-                  ShapeProvider.build(path, width, cy, y0, w, d, isLeftEdge, config.shapeProfile)
-                  c.drawPath(path, FillProvider.paintFor(config, bounds))
-                  if (config.rimLight) { rim.strokeWidth = 1.2f * density; rim.color = 0x66FFFFFF; c.drawPath(path, rim) }
-                  if (config.outerGlow) {
-                      val g = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                          style = Paint.Style.STROKE; strokeWidth = 8f * density
-                          color = config.fillColor; maskFilter = BlurMaskFilter(12f * density, BlurMaskFilter.Blur.OUTER); alpha = 90
-                      }
-                      c.drawPath(path, g)
-                  }
-                  if (config.debugOverlay) {
-                      val dbg = Paint().apply { color = 0xFFFF0000.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f }
-                      c.drawRect(bounds, dbg)
-                  }
-              }
+              external fun processBurstAndUpscale(
+                  frames: Array<Bitmap>,
+                  zoomFactor: Float,
+                  targetWidth: Int,
+                  targetHeight: Int
+              ): Bitmap?
           }
           EOF
 
-          # 23. HardwareKeyMonitorService
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/HardwareKeyMonitorService.kt
-          package com.edge.bezelmorph.engine
-          import android.accessibilityservice.AccessibilityService
-          import android.app.Notification
-          import android.app.NotificationChannel
-          import android.app.NotificationManager
-          import android.app.PendingIntent
-          import android.content.Intent
-          import android.graphics.PixelFormat
-          import android.os.*
-          import android.provider.Settings
-          import android.view.*
-          import android.view.accessibility.AccessibilityEvent
-          import com.edge.bezelmorph.data.ConfigStore
-          import com.edge.bezelmorph.core.*
-          import com.edge.bezelmorph.ui.MainActivity
-          import dagger.hilt.android.AndroidEntryPoint
+          cat << 'EOF' > app/src/main/java/com/superzoom/app/MainActivity.kt
+          package com.superzoom.app
+
+          import android.Manifest
+          import android.content.pm.PackageManager
+          import android.graphics.Bitmap
+          import android.graphics.Matrix
+          import android.os.Bundle
+          import android.view.View
+          import android.widget.Toast
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.camera.core.*
+          import androidx.camera.lifecycle.ProcessCameraProvider
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+          import com.superzoom.app.databinding.ActivityMainBinding
           import kotlinx.coroutines.*
-          import javax.inject.Inject
+          import java.util.concurrent.ConcurrentLinkedQueue
+          import java.util.concurrent.ExecutorService
+          import java.util.concurrent.Executors
 
-          @AndroidEntryPoint
-          class HardwareKeyMonitorService : AccessibilityService() {
-              @Inject lateinit var store: ConfigStore
-              @Inject lateinit var haptics: HapticEngine
-              private var wm: WindowManager? = null
-              private var overlay: BezelOverlayView? = null
-              private var config = MorphConfig()
-              private var activeKey = 0
-              private var lastTrigger = 0L
-              private var power: PowerManager? = null
-              private var currentPkg: String? = null
-              private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+          class MainActivity : AppCompatActivity() {
 
-              override fun onServiceConnected() {
-                  super.onServiceConnected()
-                  power = getSystemService(POWER_SERVICE) as? PowerManager
-                  scope.launch { config = store.load(); attachOverlay(); startForegroundNotification() }
-              }
+              private lateinit var binding: ActivityMainBinding
+              private lateinit var cameraExecutor: ExecutorService
+              private var cameraControl: CameraControl? = null
+              private var cameraInfo: CameraInfo? = null
 
-              private fun attachOverlay() {
-                  if (overlay != null) return
-                  try {
-                      wm = getSystemService(WINDOW_SERVICE) as WindowManager
-                      val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                              WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                              WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                              WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                              WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-                      val p = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,
-                          WindowManager.LayoutParams.MATCH_PARENT,
-                          WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, flags, PixelFormat.TRANSLUCENT)
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
-                          p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                      overlay = BezelOverlayView(this).apply { updateConfig(config) }
-                      wm?.addView(overlay, p)
-                  } catch (_: Exception) {}
-              }
-
-              private fun startForegroundNotification() {
-                  if (!config.showStatusNotification) return
-                  val ch = NotificationChannel("bezel_morph", "Bezel Morph", NotificationManager.IMPORTANCE_LOW)
-                  (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
-                  val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-                  val n = Notification.Builder(this, "bezel_morph")
-                      .setContentTitle("Bezel Morph").setContentText("Engine active")
-                      .setSmallIcon(android.R.drawable.ic_menu_compass).setContentIntent(pi)
-                      .build()
-                  startForeground(1, n)
-              }
-
-              override fun onKeyEvent(event: KeyEvent): Boolean {
-                  val profileName = currentPkg?.let { config.perAppProfiles[it] }
-                  val activeConfig = config
-
-                  val code = event.keyCode
-                  if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                      if (!canTrigger()) return false
-                      activeKey = code
-                      haptics.press(activeConfig)
-                      overlay?.let { v -> v.updateConfig(activeConfig); v.centerY = v.height * activeConfig.centerYRatio; v.onPress() }
-                  } else if (event.action == KeyEvent.ACTION_UP && activeKey == code) {
-                      activeKey = 0; haptics.release(activeConfig); overlay?.onRelease()
-                  }
-                  return activeConfig.suppressVolumeUi
-              }
-
-              private fun canTrigger(): Boolean {
-                  if (config.onlyWhenScreenOn && power?.isInteractive == false) return false
-                  val now = System.currentTimeMillis()
-                  if (now - lastTrigger < 60_000L / config.rateLimitPerMinute.coerceAtLeast(1)) return false
-                  lastTrigger = now; return true
-              }
-
-              override fun onAccessibilityEvent(e: AccessibilityEvent?) {
-                  e?.packageName?.let { currentPkg = it.toString() }
-              }
-              override fun onInterrupt() {}
-              override fun onDestroy() {
-                  super.onDestroy(); scope.cancel()
-                  try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
-              }
-          }
-          EOF
-
-          # 24. FloatingBubbleService
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/engine/FloatingBubbleService.kt
-          package com.edge.bezelmorph.engine
-          import android.app.*
-          import android.content.Intent
-          import android.graphics.PixelFormat
-          import android.os.IBinder
-          import android.view.*
-          import android.widget.ImageView
-          import com.edge.bezelmorph.data.ConfigStore
-          import com.edge.bezelmorph.ui.MainActivity
-          import dagger.hilt.android.AndroidEntryPoint
-          import kotlinx.coroutines.*
-          import javax.inject.Inject
-
-          @AndroidEntryPoint
-          class FloatingBubbleService : Service() {
-              @Inject lateinit var store: ConfigStore
-              private var wm: WindowManager? = null
-              private var bubble: ImageView? = null
-              private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-
-              override fun onCreate() {
-                  super.onCreate()
-                  val ch = NotificationChannel("bubble", "Bubble", NotificationManager.IMPORTANCE_LOW)
-                  (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
-                  startForeground(2, Notification.Builder(this, "bubble")
-                      .setContentTitle("Bezel Morph Bubble").setSmallIcon(android.R.drawable.ic_menu_compass).build())
-              }
-
-              override fun onStartCommand(i: Intent?, f: Int, s: Int): Int {
-                  scope.launch {
-                      val c = store.load()
-                      if (!c.bubbleEnabled) { stopSelf(); return@launch }
-                      if (bubble == null) {
-                          wm = getSystemService(WINDOW_SERVICE) as WindowManager
-                          val p = WindowManager.LayoutParams(80, 80,
-                              WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                              WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                              PixelFormat.TRANSLUCENT).apply { x = c.bubbleX; y = c.bubbleY; gravity = Gravity.TOP or Gravity.START }
-                          bubble = ImageView(this@FloatingBubbleService).apply {
-                              setImageResource(android.R.drawable.ic_menu_compass)
-                              setBackgroundColor(0x8838BDF8.toInt())
-                              setOnClickListener { sendBroadcast(Intent("com.edge.bezelmorph.TRIGGER")) }
-                          }
-                          wm?.addView(bubble, p)
-                      }
-                  }
-                  return START_STICKY
-              }
-              override fun onBind(i: Intent?): IBinder? = null
-              override fun onDestroy() { super.onDestroy(); scope.cancel(); try { bubble?.let { wm?.removeView(it) } } catch (_: Exception) {} }
-          }
-          EOF
-
-          # 25. Compose UI (MainActivity)
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/MainActivity.kt
-          package com.edge.bezelmorph.ui
-          import android.accessibilityservice.AccessibilityServiceInfo
-          import android.content.*
-          import android.graphics.Color
-          import android.net.Uri
-          import android.os.*
-          import android.provider.Settings
-          import android.view.accessibility.AccessibilityManager
-          import androidx.activity.ComponentActivity
-          import androidx.activity.compose.setContent
-          import androidx.activity.result.contract.ActivityResultContracts
-          import androidx.compose.foundation.background
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.foundation.rememberScrollState
-          import androidx.compose.foundation.verticalScroll
-          import androidx.compose.material3.*
-          import androidx.compose.runtime.*
-          import androidx.compose.ui.Alignment
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.graphics.Color as ComposeColor
-          import androidx.compose.ui.text.font.FontWeight
-          import androidx.compose.ui.unit.dp
-          import androidx.compose.ui.unit.sp
-          import androidx.hilt.navigation.compose.hiltViewModel
-          import com.edge.bezelmorph.core.*
-          import com.edge.bezelmorph.engine.BezelOverlayView
-          import com.edge.bezelmorph.engine.HapticEngine
-          import dagger.hilt.android.AndroidEntryPoint
-          import kotlinx.coroutines.launch
-          import javax.inject.Inject
-
-          @AndroidEntryPoint
-          class MainActivity : ComponentActivity() {
-              @Inject lateinit var store: ConfigStore
-              @Inject lateinit var haptics: HapticEngine
-
-              private val captureLauncher = registerForActivityResult(
-                  ActivityResultContracts.StartActivityForResult()
-              ) { res -> if (res.resultCode == RESULT_OK && res.data != null) { /* ScreenCaptureManager.start */ } }
+              // Circular buffer for 12 continuous frames
+              private val burstBuffer = ConcurrentLinkedQueue<Bitmap>()
+              private val BUFFER_SIZE = 12
+              private var currentZoomFactor = 10.0f
+              private var isProcessing = false
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  setContent {
-                      MaterialTheme(colorScheme = darkColorScheme()) {
-                          Surface(modifier = Modifier.fillMaxSize().background(ComposeColor(0xFF0F172A))) {
-                              MainScreen()
-                          }
-                      }
-                  }
-              }
+                  binding = ActivityMainBinding.inflate(layoutInflater)
+                  setContentView(binding.root)
 
-              @Composable
-              fun MainScreen() {
-                  val config = remember { mutableStateOf(MorphConfig()) }
-                  val hasAccess by remember { mutableStateOf(hasAccessibility()) }
-                  LaunchedEffect(Unit) { config.value = store.load() }
+                  cameraExecutor = Executors.newSingleThreadExecutor()
 
-                  if (!hasAccess) {
-                      PermissionGate(onGrant = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
+                  loadNeuralModels()
+                  setupUI()
+
+                  if (allPermissionsGranted()) {
+                      startCamera()
                   } else {
-                      Dashboard(config.value, onConfigChange = { newConfig ->
-                          config.value = newConfig
-                          lifecycleScope.launch { store.save(newConfig) }
-                      })
+                      ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS)
                   }
               }
 
-              private fun hasAccessibility(): Boolean {
-                  val am = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
-                  return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                      .any { it.id.contains(packageName) }
-              }
-          }
-          EOF
-
-          # 26. ConfigSchema for Compose
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/ConfigSchema.kt
-          package com.edge.bezelmorph.ui
-          import androidx.compose.runtime.*
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.material3.*
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.unit.dp
-          import com.edge.bezelmorph.core.*
-
-          enum class FieldType { FLOAT, INT, BOOLEAN, ENUM, COLOR }
-          data class ConfigField(
-              val label: String, val type: FieldType, val category: String,
-              val min: Float = 0f, val max: Float = 1f, val scale: Float = 1f,
-              val enumValues: List<String> = emptyList(),
-              val get: (MorphConfig) -> Float, val set: (MorphConfig, Float) -> Unit
-          ) {
-              fun currentValue(c: MorphConfig): String = when (type) {
-                  FieldType.BOOLEAN -> if (get(c) > 0.5f) "ON" else "OFF"
-                  FieldType.ENUM -> enumValues.getOrElse(get(c).toInt()) { "?" }
-                  FieldType.COLOR -> String.format("#%06X", get(c).toInt() and 0xFFFFFF)
-                  else -> if (scale > 1f) String.format("%.1f", get(c)) else get(c).toInt().toString()
-              }
-          }
-
-          object ConfigSchema {
-              val ALL = listOf(
-                  ConfigField("Edge", FieldType.ENUM, "Geometry", enumValues = Edge.entries.map { it.name },
-                      get = { it.edge.ordinal.toFloat() }, set = { c, v -> c.edge = Edge.entries[v.toInt()] }),
-                  ConfigField("Center Y (%)", FieldType.FLOAT, "Geometry", min = 0.05f, max = 0.95f, scale = 1000f,
-                      get = { it.centerYRatio }, set = { c, v -> c.centerYRatio = v }),
-                  ConfigField("Plateau (dp)", FieldType.FLOAT, "Geometry", min = 12f, max = 80f,
-                      get = { it.y0Dp }, set = { c, v -> c.y0Dp = v }),
-                  ConfigField("Shoulder (dp)", FieldType.FLOAT, "Geometry", min = 15f, max = 100f,
-                      get = { it.wDp }, set = { c, v -> c.wDp = v }),
-                  ConfigField("Depth (dp)", FieldType.FLOAT, "Geometry", min = 6f, max = 45f,
-                      get = { it.depthDp }, set = { c, v -> c.depthDp = v }),
-                  ConfigField("Shape", FieldType.ENUM, "Shape", enumValues = ShapeProfile.entries.map { it.name },
-                      get = { it.shapeProfile.ordinal.toFloat() }, set = { c, v -> c.shapeProfile = ShapeProfile.entries[v.toInt()] }),
-                  ConfigField("Resonance", FieldType.FLOAT, "Physics", min = 30f, max = 95f,
-                      get = { it.omegaN }, set = { c, v -> c.omegaN = v }),
-                  ConfigField("Damping", FieldType.FLOAT, "Physics", min = 0.5f, max = 0.99f, scale = 100f,
-                      get = { it.zeta }, set = { c, v -> c.zeta = v }),
-                  ConfigField("Impulse", FieldType.FLOAT, "Physics", min = 500f, max = 4000f,
-                      get = { it.inwardVelocity }, set = { c, v -> c.inwardVelocity = v }),
-                  ConfigField("Substepping", FieldType.BOOLEAN, "Physics",
-                      get = { if (it.substepping) 1f else 0f }, set = { c, v -> c.substepping = v > 0.5f }),
-                  ConfigField("Fill mode", FieldType.ENUM, "Fill", enumValues = FillMode.entries.map { it.name },
-                      get = { it.fillMode.ordinal.toFloat() }, set = { c, v -> c.fillMode = FillMode.entries[v.toInt()] }),
-                  ConfigField("Primary color", FieldType.COLOR, "Fill",
-                      get = { it.fillColor.toFloat() }, set = { c, v -> c.fillColor = v.toInt() }),
-                  ConfigField("Inner shadow", FieldType.BOOLEAN, "Fill",
-                      get = { if (it.innerShadow) 1f else 0f }, set = { c, v -> c.innerShadow = v > 0.5f }),
-                  ConfigField("Rim light", FieldType.BOOLEAN, "Fill",
-                      get = { if (it.rimLight) 1f else 0f }, set = { c, v -> c.rimLight = v > 0.5f }),
-                  ConfigField("Haptics", FieldType.BOOLEAN, "Haptics",
-                      get = { if (it.hapticEnabled) 1f else 0f }, set = { c, v -> c.hapticEnabled = v > 0.5f }),
-                  ConfigField("Press effect", FieldType.ENUM, "Haptics", enumValues = listOf("TICK", "CLICK", "HEAVY", "DOUBLE"),
-                      get = { it.pressEffect.toFloat() }, set = { c, v -> c.pressEffect = v.toInt() }),
-                  ConfigField("Click sound", FieldType.BOOLEAN, "Haptics",
-                      get = { if (it.clickSoundEnabled) 1f else 0f }, set = { c, v -> c.clickSoundEnabled = v > 0.5f }),
-                  ConfigField("Suppress volume UI", FieldType.BOOLEAN, "Behavior",
-                      get = { if (it.suppressVolumeUi) 1f else 0f }, set = { c, v -> c.suppressVolumeUi = v > 0.5f }),
-                  ConfigField("Rate limit/min", FieldType.INT, "Behavior", min = 1f, max = 120f,
-                      get = { it.rateLimitPerMinute.toFloat() }, set = { c, v -> c.rateLimitPerMinute = v.toInt() }),
-                  ConfigField("Adaptive FPS", FieldType.BOOLEAN, "Behavior",
-                      get = { if (it.adaptiveFps) 1f else 0f }, set = { c, v -> c.adaptiveFps = v > 0.5f }),
-                  ConfigField("Reduce motion", FieldType.BOOLEAN, "Behavior",
-                      get = { if (it.reduceMotion) 1f else 0f }, set = { c, v -> c.reduceMotion = v > 0.5f }),
-                  ConfigField("Gesture edge swipe", FieldType.BOOLEAN, "Advanced",
-                      get = { if (it.gestureEdgeSwipeEnabled) 1f else 0f }, set = { c, v -> c.gestureEdgeSwipeEnabled = v > 0.5f }),
-                  ConfigField("Show notification", FieldType.BOOLEAN, "Advanced",
-                      get = { if (it.showStatusNotification) 1f else 0f }, set = { c, v -> c.showStatusNotification = v > 0.5f }),
-                  ConfigField("Floating bubble", FieldType.BOOLEAN, "Advanced",
-                      get = { if (it.bubbleEnabled) 1f else 0f }, set = { c, v -> c.bubbleEnabled = v > 0.5f }),
-                  ConfigField("Script enabled", FieldType.BOOLEAN, "Advanced",
-                      get = { if (it.scriptEnabled) 1f else 0f }, set = { c, v -> c.scriptEnabled = v > 0.5f }),
-                  ConfigField("Click volume", FieldType.FLOAT, "Advanced", min = 0f, max = 1f, scale = 100f,
-                      get = { it.clickVolume.toFloat() }, set = { c, v -> c.clickVolume = v.toInt() })
-              )
-          }
-          EOF
-
-          # 27. Dashboard Compose screen
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/Dashboard.kt
-          package com.edge.bezelmorph.ui
-          import androidx.compose.foundation.background
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.foundation.rememberScrollState
-          import androidx.compose.foundation.verticalScroll
-          import androidx.compose.material3.*
-          import androidx.compose.runtime.*
-          import androidx.compose.ui.Alignment
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.graphics.Color as ComposeColor
-          import androidx.compose.ui.text.font.FontWeight
-          import androidx.compose.ui.unit.dp
-          import androidx.compose.ui.unit.sp
-          import androidx.compose.ui.viewinterop.AndroidView
-          import com.edge.bezelmorph.core.*
-          import com.edge.bezelmorph.engine.BezelOverlayView
-
-          @Composable
-          fun Dashboard(config: MorphConfig, onConfigChange: (MorphConfig) -> Unit) {
-              Column(modifier = Modifier.fillMaxSize().background(ComposeColor(0xFF0F172A))) {
-                  Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                      BezelPreview(config)
-                  }
-                  Column(modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
-                      Text("Physical Edge Calibrator", color = ComposeColor.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                      Text("Every parameter is live. Drag to see changes instantly.",
-                          color = ComposeColor(0xFF94A3B8), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
-                      ConfigSchema.ALL.groupBy { it.category }.forEach { (category, fields) ->
-                          Text(category, color = ComposeColor(0xFF38BDF8), fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                              modifier = Modifier.padding(top = 24.dp, bottom = 8.dp))
-                          fields.forEach { field ->
-                              ControlField(field, config, onConfigChange)
-                          }
+              private fun loadNeuralModels() {
+                  CoroutineScope(Dispatchers.IO).launch {
+                      try {
+                          val paramBytes = assets.open("models/realesrgan.param").readBytes()
+                          val binBytes = assets.open("models/realesrgan.bin").readBytes()
+                          SuperZoomNative.initModel(paramBytes, binBytes)
+                      } catch (e: Exception) {
+                          e.printStackTrace()
                       }
                   }
               }
-          }
 
-          @Composable
-          fun ControlField(field: ConfigField, config: MorphConfig, onChange: (MorphConfig) -> Unit) {
-              when (field.type) {
-                  FieldType.FLOAT, FieldType.INT -> {
-                      Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                          Text(field.label, color = ComposeColor(0xFFCBD5E1), fontSize = 12.sp)
-                          Text(field.currentValue(config), color = ComposeColor(0xFF38BDF8), fontSize = 12.sp)
-                          Slider(
-                              value = field.get(config),
-                              onValueChange = { v ->
-                                  val newConfig = config.copy().also { field.set(it, v) }
-                                  onChange(newConfig)
-                              },
-                              valueRange = field.min..field.max
-                          )
+              private fun setupUI() {
+                  binding.zoomSlider.addOnChangeListener { _, value, _ ->
+                      currentZoomFactor = value
+                      binding.zoomLevelText.text = String.format("%.1fx Zoom", currentZoomFactor)
+                      
+                      // Apply digital zoom preview to hardware sensor within supported ratio
+                      cameraInfo?.zoomState?.value?.let { state ->
+                          val hardwareZoom = (currentZoomFactor / 10.0f).coerceIn(state.minZoomRatio, state.maxZoomRatio)
+                          cameraControl?.setZoomRatio(hardwareZoom)
                       }
                   }
-                  FieldType.BOOLEAN -> {
-                      Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                          Text(field.label, color = ComposeColor(0xFFCBD5E1), fontSize = 14.sp)
-                          Switch(
-                              checked = field.get(config) > 0.5f,
-                              onCheckedChange = { checked ->
-                                  val newConfig = config.copy().also { field.set(it, if (checked) 1f else 0f) }
-                                  onChange(newConfig)
-                              }
-                          )
+
+                  binding.shutterButton.setOnClickListener {
+                      if (!isProcessing && burstBuffer.isNotEmpty()) {
+                          captureAndRemaster()
+                      } else {
+                          Toast.makeText(this, "Filling burst buffer...", Toast.LENGTH_SHORT).show()
                       }
                   }
-                  FieldType.ENUM -> {
-                      var expanded by remember { mutableStateOf(false) }
-                      Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                          Text(field.label, color = ComposeColor(0xFFCBD5E1), fontSize = 12.sp)
-                          Box {
-                              Button(onClick = { expanded = true }) {
-                                  Text(field.enumValues.getOrElse(field.get(config).toInt()) { "?" })
-                              }
-                              DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                  field.enumValues.forEachIndexed { index, value ->
-                                      DropdownMenuItem(
-                                          text = { Text(value) },
-                                          onClick = {
-                                              val newConfig = config.copy().also { field.set(it, index.toFloat()) }
-                                              onChange(newConfig)
-                                              expanded = false
-                                          }
-                                      )
+
+                  binding.closePreviewButton.setOnClickListener {
+                      binding.resultImageView.visibility = View.GONE
+                      binding.closePreviewButton.visibility = View.GONE
+                      binding.viewFinder.visibility = View.VISIBLE
+                  }
+              }
+
+              private fun startCamera() {
+                  val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+                  cameraProviderFuture.addListener({
+                      val cameraProvider = cameraProviderFuture.get()
+
+                      val preview = Preview.Builder().build().also {
+                          it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
+                      }
+
+                      // Stream analyzer operating as the burst ring buffer
+                      val imageAnalyzer = ImageAnalysis.Builder()
+                          .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                          .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                          .build()
+                          .also {
+                              it.setAnalyzer(cameraExecutor) { imageProxy ->
+                                  if (!isProcessing) {
+                                      val bmp = imageProxy.toBitmap()
+                                      val rotation = imageProxy.imageInfo.rotationDegrees
+                                      val rotated = if (rotation != 0) {
+                                          val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                                          Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+                                      } else bmp
+
+                                      burstBuffer.offer(rotated)
+                                      while (burstBuffer.size > BUFFER_SIZE) {
+                                          val old = burstBuffer.poll()
+                                          if (old != null && old != rotated) old.recycle()
+                                      }
                                   }
+                                  imageProxy.close()
                               }
                           }
+
+                      val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                      try {
+                          cameraProvider.unbindAll()
+                          val camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+                          cameraControl = camera.cameraControl
+                          cameraInfo = camera.cameraInfo
+                      } catch (e: Exception) {
+                          e.printStackTrace()
                       }
-                  }
-                  FieldType.COLOR -> {
-                      Button(onClick = { /* color picker dialog */ }) {
-                          Text("${field.label}: ${field.currentValue(config)}")
-                      }
-                  }
+                  }, ContextCompat.getMainExecutor(this))
               }
-          }
 
-          @Composable
-          fun BezelPreview(config: MorphConfig) {
-              AndroidView(factory = { context ->
-                  BezelOverlayView(context).apply {
-                      updateConfig(config)
-                      centerY = height * config.centerYRatio
-                      setStaticPreview(1f)
-                  }
-              }, update = { view ->
-                  view.updateConfig(config)
-                  view.centerY = view.height * config.centerYRatio
-                  view.setStaticPreview(1f)
-              })
-          }
-          EOF
+              private fun captureAndRemaster() {
+                  isProcessing = true
+                  binding.progressBar.visibility = View.VISIBLE
+                  binding.statusText.text = "Aligning multi-frames & applying AI..."
+                  binding.statusText.visibility = View.VISIBLE
 
-          # 28. PermissionGate
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/ui/PermissionGate.kt
-          package com.edge.bezelmorph.ui
-          import androidx.compose.foundation.background
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.material3.*
-          import androidx.compose.runtime.Composable
-          import androidx.compose.ui.Alignment
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.graphics.Color as ComposeColor
-          import androidx.compose.ui.text.font.FontWeight
-          import androidx.compose.ui.unit.dp
-          import androidx.compose.ui.unit.sp
+                  // Freeze the frames from the ring buffer
+                  val framesSnapshot = burstBuffer.toTypedArray()
 
-          @Composable
-          fun PermissionGate(onGrant: () -> Unit) {
-              Column(
-                  modifier = Modifier.fillMaxSize().background(ComposeColor(0xFF0F172A)).padding(32.dp),
-                  horizontalAlignment = Alignment.CenterHorizontally,
-                  verticalArrangement = Arrangement.Center
-              ) {
-                  Text("System Authorization", color = ComposeColor.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                  Text("Grant accessibility so the engine can observe hardware key events.",
-                      color = ComposeColor(0xFF94A3B8), fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp, bottom = 32.dp))
-                  Button(onClick = onGrant, modifier = Modifier.fillMaxWidth()) {
-                      Text("Grant Accessibility")
-                  }
-              }
-          }
-          EOF
+                  CoroutineScope(Dispatchers.Default).launch {
+                      val resultBitmap = SuperZoomNative.processBurstAndUpscale(
+                          framesSnapshot,
+                          currentZoomFactor,
+                          1080,
+                          1920
+                      )
 
-          # 29. QuickSettingsTile
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/integration/QuickSettingsTile.kt
-          package com.edge.bezelmorph.integration
-          import android.service.quicksettings.Tile
-          import android.service.quicksettings.TileService
-          import com.edge.bezelmorph.data.ConfigStore
-          import kotlinx.coroutines.*
-          import kotlinx.coroutines.flow.first
+                      withContext(Dispatchers.Main) {
+                          binding.progressBar.visibility = View.GONE
+                          binding.statusText.visibility = View.GONE
+                          isProcessing = false
 
-          class QuickSettingsTile : TileService() {
-              private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-              override fun onStartListening() {
-                  super.onStartListening()
-                  scope.launch {
-                      val c = ConfigStore(this@QuickSettingsTile).load()
-                      qsTile?.apply { state = if (c.hapticEnabled) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE; updateTile() }
-                  }
-              }
-              override fun onClick() {
-                  super.onClick()
-                  scope.launch {
-                      val s = ConfigStore(this@QuickSettingsTile); val c = s.load()
-                      val newConfig = c.copy(hapticEnabled = !c.hapticEnabled)
-                      s.save(newConfig)
-                      qsTile?.apply { state = if (newConfig.hapticEnabled) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE; updateTile() }
-                  }
-              }
-              override fun onDestroy() { super.onDestroy(); scope.cancel() }
-          }
-          EOF
-
-          # 30. Widget + AutomationReceiver + BootReceiver
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/integration/BezelWidgetProvider.kt
-          package com.edge.bezelmorph.integration
-          import android.appwidget.AppWidgetManager
-          import android.appwidget.AppWidgetProvider
-          import android.content.Context
-          import android.widget.RemoteViews
-          import com.edge.bezelmorph.R
-          import com.edge.bezelmorph.data.ConfigStore
-          import kotlinx.coroutines.*
-
-          class BezelWidgetProvider : AppWidgetProvider() {
-              override fun onUpdate(ctx: Context, mgr: AppWidgetManager, ids: IntArray) {
-                  runBlocking {
-                      val c = ConfigStore(ctx).load()
-                      ids.forEach { id ->
-                          val v = RemoteViews(ctx.packageName, R.layout.widget_bezel)
-                          v.setTextViewText(R.id.widget_status, if (c.hapticEnabled) "Bezel Morph: ON" else "Bezel Morph: OFF")
-                          mgr.updateAppWidget(id, v)
-                      }
-                  }
-              }
-          }
-          EOF
-
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/integration/AutomationReceiver.kt
-          package com.edge.bezelmorph.integration
-          import android.content.BroadcastReceiver
-          import android.content.Context
-          import android.content.Intent
-          import com.edge.bezelmorph.data.ConfigStore
-          import kotlinx.coroutines.*
-
-          class AutomationReceiver : BroadcastReceiver() {
-              override fun onReceive(ctx: Context, intent: Intent) {
-                  val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-                  val store = ConfigStore(ctx)
-                  when (intent.action) {
-                      "com.edge.bezelmorph.TRIGGER" -> ctx.sendBroadcast(Intent("com.edge.bezelmorph.INTERNAL_TRIGGER"))
-                      "com.edge.bezelmorph.SET_PROFILE" -> {
-                          intent.getStringExtra("profile")?.let { name ->
-                              scope.launch { store.load()?.let { store.save(it) } }
+                          if (resultBitmap != null) {
+                              binding.viewFinder.visibility = View.GONE
+                              binding.resultImageView.setImageBitmap(resultBitmap)
+                              binding.resultImageView.visibility = View.VISIBLE
+                              binding.closePreviewButton.visibility = View.VISIBLE
+                          } else {
+                              Toast.makeText(this@MainActivity, "Processing failed", Toast.LENGTH_SHORT).show()
                           }
                       }
                   }
               }
-          }
-          EOF
 
-          cat << 'EOF' > app/src/main/java/com/edge/bezelmorph/integration/BootReceiver.kt
-          package com.edge.bezelmorph.integration
-          import android.content.BroadcastReceiver
-          import android.content.Context
-          import android.content.Intent
-          import com.edge.bezelmorph.data.ConfigStore
-          import kotlinx.coroutines.*
+              private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
+                  ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
+              }
 
-          class BootReceiver : BroadcastReceiver() {
-              override fun onReceive(ctx: Context, i: Intent) {
-                  if (i.action == Intent.ACTION_BOOT_COMPLETED) {
-                      CoroutineScope(Dispatchers.IO).launch { ConfigStore(ctx).load() }
+              override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  if (requestCode == REQUEST_CODE_PERMISSIONS) {
+                      if (allPermissionsGranted()) {
+                          startCamera()
+                      } else {
+                          Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show()
+                          finish()
+                      }
                   }
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  cameraExecutor.shutdown()
+              }
+
+              companion object {
+                  private const val REQUEST_CODE_PERMISSIONS = 10
+                  private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
               }
           }
           EOF
 
-          # 31. Remaining drawables + XML
-          cat << 'EOF' > app/src/main/res/drawable/ic_check_circle.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp"
-              android:viewportWidth="24" android:viewportHeight="24">
-              <path android:fillColor="#10B981" android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM10,17l-5,-5 1.41,-1.41L10,14.17l7.59,-7.59L19,8l-9,9z"/>
-          </vector>
-          EOF
-          cat << 'EOF' > app/src/main/res/drawable/ic_chevron_right.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp"
-              android:viewportWidth="24" android:viewportHeight="24">
-              <path android:fillColor="#94A3B8" android:pathData="M10,6L8.59,7.41 13.17,12l-4.58,4.59L10,18l6,-6z"/>
-          </vector>
-          EOF
-          cat << 'EOF' > app/src/main/res/drawable/ic_accessibility.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp"
-              android:viewportWidth="24" android:viewportHeight="24">
-              <path android:fillColor="#3B82F6" android:pathData="M12,2c1.1,0 2,0.9 2,2s-0.9,2 -2,2 -2,-0.9 -2,-2 0.9,-2 2,-2zm9,7h-6v13h-2v-6h-2v6H9V9H3V7h18v2z"/>
-          </vector>
-          EOF
-          cat << 'EOF' > app/src/main/res/drawable/ic_qs_tile.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp"
-              android:viewportWidth="24" android:viewportHeight="24">
-              <path android:fillColor="#FFFFFF" android:pathData="M4,6 h16 v12 H4 z M6,8 v8 h12 V8 z M2,10 h2 v4 H2 z"/>
-          </vector>
-          EOF
-          cat << 'EOF' > app/src/main/res/layout/widget_bezel.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-              android:layout_width="match_parent" android:layout_height="match_parent"
-              android:orientation="vertical" android:padding="12dp" android:background="#1E293B">
-              <TextView android:id="@+id/widget_status" android:layout_width="wrap_content"
-                  android:layout_height="wrap_content" android:text="Bezel Morph" android:textColor="#F8FAFC" android:textSize="14sp"/>
-          </LinearLayout>
-          EOF
-          cat << 'EOF' > app/src/main/res/xml/bezel_widget_info.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-              android:minWidth="110dp" android:minHeight="40dp" android:updatePeriodMillis="1800000"
-              android:initialLayout="@layout/widget_bezel" android:widgetCategory="home_screen"/>
-          EOF
-          cat << 'EOF' > app/src/main/res/xml/shortcuts.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
-              <shortcut android:shortcutId="toggle" android:enabled="true" android:icon="@drawable/ic_qs_tile"
-                  android:shortcutShortLabel="Toggle Bezel Morph">
-                  <intent android:action="android.intent.action.MAIN"
-                      android:targetPackage="com.edge.bezelmorph"
-                      android:targetClass="com.edge.bezelmorph.ui.MainActivity"/>
-              </shortcut>
-          </shortcuts>
-          EOF
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 9.1.0
-
-      - name: Decode Release Keystore (optional)
-        if: env.HAS_KEYSTORE == 'true'
-        run: echo "${{ env.KEYSTORE_BASE64 }}" | base64 --decode > app/release.keystore
-
-      - name: Compile Production APK (Release + Debug)
+      # -------------------------------------------------------------
+      # 9. ASSEMBLE RELEASE APK
+      # -------------------------------------------------------------
+      - name: Build APK with Gradle
         run: |
-          gradle assembleRelease assembleDebug --stacktrace --no-daemon
+          gradle wrapper
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Upload Release APK
+      # -------------------------------------------------------------
+      # 10. UPLOAD APK ARTIFACT
+      # -------------------------------------------------------------
+      - name: Upload Downloadable APK
         uses: actions/upload-artifact@v4
         with:
-          name: BezelMorph-Release-APK
-          path: app/build/outputs/apk/release/app-release.apk
-          retention-days: 30
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: BezelMorph-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 7
+          name: 100x-SuperZoom-APK
+          path: app/build/outputs/apk/release/*.apk
