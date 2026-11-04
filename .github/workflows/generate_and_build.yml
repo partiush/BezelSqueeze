@@ -34,7 +34,7 @@ jobs:
           mkdir -p app/src/main/assets/models
 
           # -------------------------------------------------------------
-          # 1. GRADLE PROPERTIES (FIXES ANDROIDX ISSUE)
+          # 1. GRADLE PROPERTIES
           # -------------------------------------------------------------
           cat << 'EOF' > gradle.properties
           android.useAndroidX=true
@@ -43,7 +43,7 @@ jobs:
           EOF
 
           # -------------------------------------------------------------
-          # 2. ROOT BUILD & SETTINGS
+          # 2. ROOT SETTINGS & BUILD SCRIPT
           # -------------------------------------------------------------
           cat << 'EOF' > settings.gradle
           pluginManagement {
@@ -72,7 +72,7 @@ jobs:
           EOF
 
           # -------------------------------------------------------------
-          # 3. APP GRADLE WITH NDK & CAMERAX
+          # 3. APP GRADLE (AUTO-SIGNED RELEASE APK)
           # -------------------------------------------------------------
           cat << 'EOF' > app/build.gradle
           plugins {
@@ -104,6 +104,7 @@ jobs:
 
               buildTypes {
                   release {
+                      signingConfig signingConfigs.debug
                       minifyEnabled false
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                   }
@@ -178,7 +179,7 @@ jobs:
           EOF
 
           # -------------------------------------------------------------
-          # 5. UI LAYOUT & TARGET LOCK RETICLE
+          # 5. UI LAYOUT & RESOURCES (ESCAPED XML)
           # -------------------------------------------------------------
           cat << 'EOF' > app/src/main/res/values/themes.xml
           <resources>
@@ -278,7 +279,7 @@ jobs:
                   android:layout_marginTop="12dp"
                   android:background="#99000000"
                   android:padding="8dp"
-                  android:text="Stabilizing & Remastering..."
+                  android:text="Stabilizing &amp; Remastering..."
                   android:textColor="#00FFCC"
                   android:textSize="14sp"
                   android:visibility="gone"
@@ -357,7 +358,7 @@ jobs:
           curl -L -o realesrgan.bin https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.bin || touch realesrgan.bin
 
       # -------------------------------------------------------------
-      # 8. C++ NATIVE ENGINE (MOON TRACKING, MANUAL LOCK & MULTI-FRAME FUSION)
+      # 8. C++ NATIVE ENGINE
       # -------------------------------------------------------------
       - name: Write C++ Engine and JNI Bridge
         run: |
@@ -437,7 +438,6 @@ jobs:
               return JNI_TRUE;
           }
 
-          // Detect Moon disc via luminance thresholding and contour moments
           extern "C" JNIEXPORT jfloatArray JNICALL
           Java_com_superzoom_app_SuperZoomNative_detectMoonTarget(
                   JNIEnv* env,
@@ -454,7 +454,6 @@ jobs:
               cv::cvtColor(frameRGBA, gray, cv::COLOR_RGBA2GRAY);
               AndroidBitmap_unlockPixels(env, bitmap);
 
-              // Moon is exceptionally bright compared to dark sky background
               cv::Mat thresh;
               cv::threshold(gray, thresh, 190, 255, cv::THRESH_BINARY);
 
@@ -534,7 +533,6 @@ jobs:
               float cropW = (float)srcW / zoom_factor;
               float cropH = (float)srcH / zoom_factor;
 
-              // Center around user manual lock target or moon centroid
               float centerX = (target_x_ratio >= 0) ? (target_x_ratio * srcW) : (srcW / 2.0f);
               float centerY = (target_y_ratio >= 0) ? (target_y_ratio * srcH) : (srcH / 2.0f);
 
@@ -547,7 +545,6 @@ jobs:
               cv::Rect cropRect((int)cropX, (int)cropY, (int)cropW, (int)cropH);
               cropRect = cropRect & cv::Rect(0, 0, srcW, srcH);
 
-              // Find sharpest frame
               int bestIdx = 0;
               double maxVariance = -1.0;
               for (size_t i = 0; i < frames.size(); ++i) {
@@ -567,7 +564,6 @@ jobs:
               cv::Mat accumulator = cv::Mat::zeros(anchorFrame.size(), CV_32FC3);
               float totalWeight = 0.0f;
 
-              // Sub-pixel multi-frame shift alignment to prevent text/feature hallucinations
               for (size_t i = 0; i < frames.size(); ++i) {
                   cv::Mat currentCrop = frames[i](cropRect);
                   cv::Point2d shift = estimateSubpixelShift(anchorFrame, currentCrop);
@@ -632,7 +628,7 @@ jobs:
           EOF
 
       # -------------------------------------------------------------
-      # 9. KOTLIN UI, REAL-TIME STABILIZATION & MANUAL/AUTO LOCK
+      # 9. KOTLIN UI, CAMERA BUFFER & INTERFACE
       # -------------------------------------------------------------
       - name: Write Kotlin Camera & Processing Code
         run: |
@@ -695,7 +691,6 @@ jobs:
               private var currentZoomFactor = 10.0f
               private var isProcessing = false
 
-              // Stabilization and Target Locking
               private var autoMoonDetection = true
               private var lockedTargetRatio: PointF? = null
               private var smoothedTranslationX = 0f
@@ -743,7 +738,6 @@ jobs:
                       }
                   }
 
-                  // Auto Moon Tracking toggle
                   binding.toggleMoonModeBtn.setOnClickListener {
                       autoMoonDetection = !autoMoonDetection
                       binding.toggleMoonModeBtn.text = if (autoMoonDetection) "Auto Moon: ON" else "Auto Moon: OFF"
@@ -752,7 +746,6 @@ jobs:
                       }
                   }
 
-                  // Manual Tap-to-Lock on screen
                   binding.viewFinder.setOnTouchListener { _, event ->
                       if (event.action == MotionEvent.ACTION_DOWN) {
                           autoMoonDetection = false
@@ -809,7 +802,6 @@ jobs:
                                           Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
                                       } else bmp
 
-                                      // Auto Moon Centroid Detection & Real-time Stabilization
                                       if (autoMoonDetection) {
                                           val coords = SuperZoomNative.detectMoonTarget(rotated)
                                           if (coords != null && coords[0] >= 0 && coords[1] >= 0) {
@@ -824,7 +816,6 @@ jobs:
                                                   binding.lockReticle.y = screenTargetY - (binding.lockReticle.height / 2f)
                                                   binding.lockReticle.visibility = View.VISIBLE
 
-                                                  // Counter-shift Viewfinder canvas (Active Electronic Stabilization)
                                                   val deltaX = (binding.viewFinder.width / 2f) - screenTargetX
                                                   val deltaY = (binding.viewFinder.height / 2f) - screenTargetY
                                                   smoothedTranslationX += (deltaX - smoothedTranslationX) * 0.25f
@@ -924,7 +915,7 @@ jobs:
           EOF
 
       # -------------------------------------------------------------
-      # 10. SETUP COMPATIBLE GRADLE 8.2 WRAPPER & ASSEMBLE APK
+      # 10. COMPILE WITH GRADLE 8.2
       # -------------------------------------------------------------
       - name: Build APK with Compatible Gradle Wrapper
         run: |
