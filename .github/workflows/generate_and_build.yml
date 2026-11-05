@@ -1,16 +1,28 @@
-name: Build 100x SuperZoom APK
+name: Build SuperZoom APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # --- Toolchain versions (latest stable) ---
+      AGP_VERSION: "8.7.3"
+      KOTLIN_VERSION: "2.0.21"
+      GRADLE_VERSION: "8.10.2"
+      CAMERAX_VERSION: "1.5.1"
+      OPENCV_VERSION: "4.12.0"
+      NCNN_VERSION: "20250428"
+      NDK_VERSION: "27.2.12479018"
+      COMPILE_SDK: "35"
+      MIN_SDK: "26"
+      TARGET_SDK: "35"
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -19,33 +31,23 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android NDK and CMake
-        uses: nttld/setup-ndk@v1
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
         with:
-          ndk-version: r25c
-          cmake-version: 3.22.1
+          ndk-version: ${{ env.NDK_VERSION }}
+          cmake-version: '3.22.1'
 
-      - name: Generate Complete Android Project Structure
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      # ------------------------------------------------------------
+      # 1. Create all Gradle project files
+      # ------------------------------------------------------------
+      - name: Create Gradle root files
         run: |
-          mkdir -p app/src/main/java/com/superzoom/app
-          mkdir -p app/src/main/cpp/3rdparty
-          mkdir -p app/src/main/res/layout
-          mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/assets/models
-
-          # -------------------------------------------------------------
-          # 1. GRADLE PROPERTIES
-          # -------------------------------------------------------------
-          cat << 'EOF' > gradle.properties
-          android.useAndroidX=true
-          android.enableJetifier=true
-          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
-          EOF
-
-          # -------------------------------------------------------------
-          # 2. ROOT SETTINGS & BUILD SCRIPT
-          # -------------------------------------------------------------
-          cat << 'EOF' > settings.gradle
+          cat > settings.gradle.kts << 'EOF'
           pluginManagement {
               repositories {
                   google()
@@ -60,111 +62,109 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "SuperZoom100x"
-          include ':app'
+          rootProject.name = "SuperZoom"
+          include(":app")
           EOF
 
-          cat << 'EOF' > build.gradle
+          cat > build.gradle.kts << EOF
           plugins {
-              id 'com.android.application' version '8.2.2' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+              id("com.android.application") version "${{ env.AGP_VERSION }}" apply false
+              id("org.jetbrains.kotlin.android") version "${{ env.KOTLIN_VERSION }}" apply false
           }
           EOF
 
-          # -------------------------------------------------------------
-          # 3. APP GRADLE (AUTO-SIGNED RELEASE APK)
-          # -------------------------------------------------------------
-          cat << 'EOF' > app/build.gradle
+          cat > gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+      - name: Create app module build file
+        run: |
+          mkdir -p app/src/main/cpp app/src/main/java/com/example/superzoom app/src/main/res/layout app/src/main/assets
+          cat > app/build.gradle.kts << EOF
           plugins {
-              id 'com.android.application'
-              id 'org.jetbrains.kotlin.android'
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
           }
 
           android {
-              namespace 'com.superzoom.app'
-              compileSdk 34
+              namespace = "com.example.superzoom"
+              compileSdk = ${{ env.COMPILE_SDK }}
+              ndkVersion = "${{ env.NDK_VERSION }}"
 
               defaultConfig {
-                  applicationId "com.superzoom.app"
-                  minSdk 24
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
+                  applicationId = "com.example.superzoom"
+                  minSdk = ${{ env.MIN_SDK }}
+                  targetSdk = ${{ env.TARGET_SDK }}
+                  versionCode = 1
+                  versionName = "1.0"
 
                   externalNativeBuild {
                       cmake {
-                          cppFlags "-std=c++17 -O3 -fexceptions -frtti"
-                          abiFilters "arm64-v8a"
+                          cppFlags += "-std=c++17"
+                          arguments += "-DANDROID_PLATFORM=android-${{ env.MIN_SDK }}"
+                          arguments += "-DANDROID_ARM_NEON=ON"
                       }
                   }
                   ndk {
-                      abiFilters "arm64-v8a"
+                      abiFilters += listOf("arm64-v8a")
                   }
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                      minifyEnabled false
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                  }
-              }
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-              kotlinOptions {
-                  jvmTarget = '17'
               }
 
               externalNativeBuild {
                   cmake {
-                      path "src/main/cpp/CMakeLists.txt"
-                      version "3.22.1"
+                      path = file("src/main/cpp/CMakeLists.txt")
+                      version = "3.22.1"
                   }
               }
 
               buildFeatures {
-                  viewBinding true
+                  viewBinding = true
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
               }
           }
 
           dependencies {
-              implementation 'androidx.core:core-ktx:1.12.0'
-              implementation 'androidx.appcompat:appcompat:1.6.1'
-              implementation 'com.google.android.material:material:1.11.0'
-              implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+              implementation("androidx.camera:camera-core:${{ env.CAMERAX_VERSION }}")
+              implementation("androidx.camera:camera-camera2:${{ env.CAMERAX_VERSION }}")
+              implementation("androidx.camera:camera-lifecycle:${{ env.CAMERAX_VERSION }}")
+              implementation("androidx.camera:camera-view:${{ env.CAMERAX_VERSION }}")
 
-              def camerax_version = "1.3.1"
-              implementation "androidx.camera:camera-core:${camerax_version}"
-              implementation "androidx.camera:camera-camera2:${camerax_version}"
-              implementation "androidx.camera:camera-lifecycle:${camerax_version}"
-              implementation "androidx.camera:camera-view:${camerax_version}"
-
-              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.material:material:1.12.0")
+              implementation("androidx.constraintlayout:constraintlayout:2.2.0")
           }
           EOF
 
-          # -------------------------------------------------------------
-          # 4. ANDROID MANIFEST
-          # -------------------------------------------------------------
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
+      # ------------------------------------------------------------
+      # 2. Manifest & layout
+      # ------------------------------------------------------------
+      - name: Create AndroidManifest.xml
+        run: |
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-feature android:name="android.hardware.camera.any" />
-              <uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="false" />
               <uses-permission android:name="android.permission.CAMERA" />
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="28" />
 
               <application
                   android:allowBackup="true"
-                  android:icon="@android:drawable/ic_menu_camera"
-                  android:label="100x SuperZoom"
-                  android:roundIcon="@android:drawable/ic_menu_camera"
+                  android:label="SuperZoom"
                   android:supportsRtl="true"
-                  android:theme="@style/Theme.SuperZoom">
+                  android:theme="@style/Theme.Material3.DayNight.NoActionBar">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -178,758 +178,132 @@ jobs:
           </manifest>
           EOF
 
-          # -------------------------------------------------------------
-          # 5. UI LAYOUT & RESOURCES
-          # -------------------------------------------------------------
-          cat << 'EOF' > app/src/main/res/values/themes.xml
-          <resources>
-              <style name="Theme.SuperZoom" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-                  <item name="android:statusBarColor">#000000</item>
-                  <item name="android:navigationBarColor">#000000</item>
-              </style>
-          </resources>
-          EOF
-
-          cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+      - name: Create activity_main.xml
+        run: |
+          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
-          <androidx.constraintlayout.widget.ConstraintLayout 
+          <androidx.constraintlayout.widget.ConstraintLayout
               xmlns:android="http://schemas.android.com/apk/res/android"
               xmlns:app="http://schemas.android.com/apk/res-auto"
               android:layout_width="match_parent"
-              android:layout_height="match_parent"
-              android:background="#000000">
+              android:layout_height="match_parent">
 
-              <FrameLayout
-                  android:id="@+id/previewContainer"
-                  android:layout_width="match_parent"
-                  android:layout_height="match_parent">
-
-                  <androidx.camera.view.PreviewView
-                      android:id="@+id/viewFinder"
-                      android:layout_width="match_parent"
-                      android:layout_height="match_parent" />
-
-                  <View
-                      android:id="@+id/lockReticle"
-                      android:layout_width="64dp"
-                      android:layout_height="64dp"
-                      android:layout_gravity="center"
-                      android:background="@android:drawable/btn_default_small"
-                      android:backgroundTint="#00FFCC"
-                      android:alpha="0.7"
-                      android:visibility="gone" />
-              </FrameLayout>
-
-              <ImageView
-                  android:id="@+id/resultImageView"
-                  android:layout_width="match_parent"
-                  android:layout_height="match_parent"
-                  android:scaleType="fitCenter"
-                  android:visibility="gone" />
-
-              <LinearLayout
-                  android:id="@+id/topBar"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:layout_marginTop="36dp"
-                  android:orientation="horizontal"
-                  android:gravity="center_vertical"
-                  app:layout_constraintEnd_toEndOf="parent"
-                  app:layout_constraintStart_toStartOf="parent"
-                  app:layout_constraintTop_toTopOf="parent">
-
-                  <TextView
-                      android:id="@+id/zoomLevelText"
-                      android:layout_width="wrap_content"
-                      android:layout_height="wrap_content"
-                      android:background="#88000000"
-                      android:padding="8dp"
-                      android:text="10.0x Zoom"
-                      android:textColor="#FFFFFF"
-                      android:textSize="16sp"
-                      android:textStyle="bold" />
-
-                  <Button
-                      android:id="@+id/toggleMoonModeBtn"
-                      android:layout_width="wrap_content"
-                      android:layout_height="wrap_content"
-                      android:layout_marginStart="8dp"
-                      android:text="Auto Moon: ON"
-                      android:textSize="12sp"
-                      style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                      app:strokeColor="#FFFF00"
-                      android:textColor="#FFFF00" />
-              </LinearLayout>
-
-              <ProgressBar
-                  android:id="@+id/progressBar"
-                  android:layout_width="60dp"
-                  android:layout_height="60dp"
-                  android:visibility="gone"
-                  app:layout_constraintBottom_toBottomOf="parent"
-                  app:layout_constraintEnd_toEndOf="parent"
-                  app:layout_constraintStart_toStartOf="parent"
-                  app:layout_constraintTop_toTopOf="parent" />
-
-              <TextView
-                  android:id="@+id/statusText"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:layout_marginTop="12dp"
-                  android:background="#99000000"
-                  android:padding="8dp"
-                  android:text="Stabilizing &amp; Remastering..."
-                  android:textColor="#00FFCC"
-                  android:textSize="14sp"
-                  android:visibility="gone"
-                  app:layout_constraintEnd_toEndOf="parent"
-                  app:layout_constraintStart_toStartOf="parent"
-                  app:layout_constraintTop_toBottomOf="@id/progressBar" />
-
-              <com.google.android.material.slider.Slider
-                  android:id="@+id/zoomSlider"
+              <androidx.camera.view.PreviewView
+                  android:id="@+id/previewView"
                   android:layout_width="0dp"
-                  android:layout_height="wrap_content"
-                  android:layout_marginHorizontal="24dp"
-                  android:layout_marginBottom="16dp"
-                  android:valueFrom="1.0"
-                  android:valueTo="100.0"
-                  android:value="10.0"
-                  android:stepSize="1.0"
-                  app:layout_constraintBottom_toTopOf="@id/shutterButton"
-                  app:layout_constraintEnd_toEndOf="parent"
-                  app:layout_constraintStart_toStartOf="parent" />
-
-              <com.google.android.material.floatingactionbutton.FloatingActionButton
-                  android:id="@+id/shutterButton"
-                  android:layout_width="wrap_content"
-                  android:layout_height="wrap_content"
-                  android:layout_marginBottom="32dp"
-                  android:backgroundTint="#FFFFFF"
-                  android:src="@android:drawable/ic_menu_camera"
-                  app:tint="#000000"
-                  app:fabCustomSize="72dp"
-                  app:maxImageSize="36dp"
+                  android:layout_height="0dp"
+                  app:layout_constraintTop_toTopOf="parent"
                   app:layout_constraintBottom_toBottomOf="parent"
-                  app:layout_constraintEnd_toEndOf="parent"
-                  app:layout_constraintStart_toStartOf="parent" />
+                  app:layout_constraintStart_toStartOf="parent"
+                  app:layout_constraintEnd_toEndOf="parent" />
+
+              <com.example.superzoom.TrackingOverlay
+                  android:id="@+id/trackingOverlay"
+                  android:layout_width="0dp"
+                  android:layout_height="0dp"
+                  app:layout_constraintTop_toTopOf="parent"
+                  app:layout_constraintBottom_toBottomOf="parent"
+                  app:layout_constraintStart_toStartOf="parent"
+                  app:layout_constraintEnd_toEndOf="parent" />
 
               <Button
-                  android:id="@+id/closePreviewButton"
+                  android:id="@+id/captureButton"
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:layout_margin="16dp"
-                  android:text="Back to Camera"
-                  android:visibility="gone"
+                  android:text="CAPTURE 100x"
+                  android:layout_marginBottom="32dp"
+                  app:layout_constraintBottom_toBottomOf="parent"
                   app:layout_constraintStart_toStartOf="parent"
-                  app:layout_constraintTop_toTopOf="parent" />
+                  app:layout_constraintEnd_toEndOf="parent" />
+
+              <ImageView
+                  android:id="@+id/resultImage"
+                  android:layout_width="150dp"
+                  android:layout_height="150dp"
+                  android:layout_margin="16dp"
+                  android:background="#88000000"
+                  android:scaleType="fitCenter"
+                  app:layout_constraintTop_toTopOf="parent"
+                  app:layout_constraintEnd_toEndOf="parent" />
 
           </androidx.constraintlayout.widget.ConstraintLayout>
           EOF
 
-      # -------------------------------------------------------------
-      # 6. DOWNLOAD PREBUILT NCNN VULKAN SDK
-      # -------------------------------------------------------------
-      - name: Download NCNN Android Vulkan SDK
+      # ------------------------------------------------------------
+      # 3. Kotlin source files
+      # ------------------------------------------------------------
+      - name: Create Kotlin sources
         run: |
-          cd app/src/main/cpp/3rdparty
-          curl -L -o ncnn.zip https://github.com/Tencent/ncnn/releases/download/20231027/ncnn-20231027-android-vulkan.zip
-          unzip -q ncnn.zip
-          mv ncnn-20231027-android-vulkan ncnn
-          rm -rf ncnn.zip
-
-      # -------------------------------------------------------------
-      # 7. SETUP NEURAL MODEL ASSETS
-      # -------------------------------------------------------------
-      - name: Fetch Real-ESRGAN Compact Model
-        run: |
-          cd app/src/main/assets/models
-          curl -L -o realesrgan.param https://raw.githubusercontent.com/xinntao/Real-ESRGAN/master/weights/realesr-animevideov3.param || touch realesrgan.param
-          curl -L -o realesrgan.bin https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.bin || touch realesrgan.bin
-
-      # -------------------------------------------------------------
-      # 8. SELF-CONTAINED HIGH-SPEED NATIVE C++ PIPELINE
-      # -------------------------------------------------------------
-      - name: Write C++ Engine and JNI Bridge
-        run: |
-          cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
-          cmake_minimum_required(VERSION 3.22.1)
-          project("superzoom-native")
-
-          set(CMAKE_CXX_STANDARD 17)
-
-          set(ncnn_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ncnn/arm64-v8a/lib/cmake/ncnn)
-          find_package(ncnn REQUIRED)
-
-          add_library(superzoom-native SHARED
-              superzoom-native.cpp
-          )
-
-          target_include_directories(superzoom-native PRIVATE
-              ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ncnn/arm64-v8a/include/ncnn
-          )
-
-          target_link_libraries(superzoom-native PRIVATE
-              ncnn
-              android
-              jnigraphics
-              log
-              m
-          )
-          EOF
-
-          cat << 'EOF' > app/src/main/cpp/superzoom-native.cpp
-          #include <jni.h>
-          #include <string>
-          #include <vector>
-          #include <cmath>
-          #include <algorithm>
-          #include <android/log.h>
-          #include <android/bitmap.h>
-
-          #include "net.h"
-          #include "gpu.h"
-
-          #define TAG "SuperZoomNative"
-          #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
-
-          static ncnn::Net g_sr_net;
-          static bool g_sr_initialized = false;
-
-          extern "C" JNIEXPORT jboolean JNICALL
-          Java_com_superzoom_app_SuperZoomNative_initModel(
-                  JNIEnv* env,
-                  jobject /* this */,
-                  jbyteArray param_bytes,
-                  jbyteArray bin_bytes) {
-
-              ncnn::create_gpu_instance();
-              g_sr_net.opt.use_vulkan_compute = true;
-              g_sr_net.opt.use_fp16_packed = true;
-              g_sr_net.opt.use_fp16_storage = true;
-              g_sr_net.opt.use_fp16_arithmetic = true;
-
-              jbyte* param_ptr = env->GetByteArrayElements(param_bytes, nullptr);
-              int ret1 = g_sr_net.load_param_mem((const char*)param_ptr);
-              env->ReleaseByteArrayElements(param_bytes, param_ptr, 0);
-
-              jbyte* bin_ptr = env->GetByteArrayElements(bin_bytes, nullptr);
-              int ret2 = g_sr_net.load_model_mem((const unsigned char*)bin_ptr);
-              env->ReleaseByteArrayElements(bin_bytes, bin_ptr, 0);
-
-              g_sr_initialized = (ret1 == 0 && ret2 == 0);
-              return JNI_TRUE;
-          }
-
-          // Moon disc detection: extracts bright celestial body centroid from dark sky
-          extern "C" JNIEXPORT jfloatArray JNICALL
-          Java_com_superzoom_app_SuperZoomNative_detectMoonTarget(
-                  JNIEnv* env,
-                  jobject /* this */,
-                  jobject bitmap) {
-
-              AndroidBitmapInfo info;
-              if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) return nullptr;
-
-              void* pixels = nullptr;
-              AndroidBitmap_lockPixels(env, bitmap, &pixels);
-              const uint32_t* src = (const uint32_t*)pixels;
-
-              double sumX = 0, sumY = 0, totalWeight = 0;
-              int w = info.width;
-              int h = info.height;
-
-              // Step sample by 4 for high FPS preview tracking
-              for (int y = 0; y < h; y += 4) {
-                  for (int x = 0; x < w; x += 4) {
-                      uint32_t pixel = src[y * w + x];
-                      int r = (pixel) & 0xFF;
-                      int g = (pixel >> 8) & 0xFF;
-                      int b = (pixel >> 16) & 0xFF;
-                      int lum = (r * 299 + g * 587 + b * 114) / 1000;
-
-                      if (lum > 195) {
-                          double weight = (lum - 195);
-                          sumX += x * weight;
-                          sumY += y * weight;
-                          totalWeight += weight;
-                      }
-                  }
-              }
-              AndroidBitmap_unlockPixels(env, bitmap);
-
-              float foundX = -1.0f, foundY = -1.0f;
-              if (totalWeight > 2000.0) {
-                  foundX = (float)(sumX / totalWeight);
-                  foundY = (float)(sumY / totalWeight);
-              }
-
-              jfloatArray result = env->NewFloatArray(2);
-              float outCoords[2] = {foundX, foundY};
-              env->SetFloatArrayRegion(result, 0, 2, outCoords);
-              return result;
-          }
-
-          struct SubpixelShift {
-              float dx;
-              float dy;
-          };
-
-          // Sub-pixel normalized cross-correlation with 2D quadratic peak interpolation
-          SubpixelShift calculateMicroShift(const std::vector<float>& ref, const std::vector<float>& cur, int w, int h) {
-              int searchRadius = 6;
-              float maxCorr = -1e9f;
-              int bestX = 0, bestY = 0;
-
-              std::vector<std::vector<float>> corrMap(2 * searchRadius + 1, std::vector<float>(2 * searchRadius + 1, 0.0f));
-
-              for (int dy = -searchRadius; dy <= searchRadius; ++dy) {
-                  for (int dx = -searchRadius; dx <= searchRadius; ++dx) {
-                      float dot = 0.0f;
-                      int samples = 0;
-                      for (int y = searchRadius; y < h - searchRadius; y += 3) {
-                          int cy = y + dy;
-                          for (int x = searchRadius; x < w - searchRadius; x += 3) {
-                              int cx = x + dx;
-                              dot += ref[y * w + x] * cur[cy * w + cx];
-                              samples++;
-                          }
-                      }
-                      float score = (samples > 0) ? (dot / samples) : 0.0f;
-                      corrMap[dy + searchRadius][dx + searchRadius] = score;
-                      if (score > maxCorr) {
-                          maxCorr = score;
-                          bestX = dx;
-                          bestY = dy;
-                      }
-                  }
-              }
-
-              // Sub-pixel peak refinement
-              float subX = (float)bestX;
-              float subY = (float)bestY;
-
-              int mapX = bestX + searchRadius;
-              int mapY = bestY + searchRadius;
-
-              if (mapX > 0 && mapX < 2 * searchRadius) {
-                  float left = corrMap[mapY][mapX - 1];
-                  float center = corrMap[mapY][mapX];
-                  float right = corrMap[mapY][mapX + 1];
-                  float denom = 2.0f * (2.0f * center - left - right);
-                  if (std::abs(denom) > 1e-5f) {
-                      subX += (left - right) / denom;
-                  }
-              }
-              if (mapY > 0 && mapY < 2 * searchRadius) {
-                  float top = corrMap[mapY - 1][mapX];
-                  float center = corrMap[mapY][mapX];
-                  float bottom = corrMap[mapY + 1][mapX];
-                  float denom = 2.0f * (2.0f * center - top - bottom);
-                  if (std::abs(denom) > 1e-5f) {
-                      subY += (top - bottom) / denom;
-                  }
-              }
-
-              return {subX, subY};
-          }
-
-          // Bilinear sampler for sub-pixel image accumulation
-          inline void sampleBilinear(const uint8_t* img, int w, int h, float x, float y, float outRGB[3]) {
-              x = std::max(0.0f, std::min(x, (float)(w - 1)));
-              y = std::max(0.0f, std::min(y, (float)(h - 1)));
-
-              int x1 = (int)x;
-              int y1 = (int)y;
-              int x2 = std::min(x1 + 1, w - 1);
-              int y2 = std::min(y1 + 1, h - 1);
-
-              float fx = x - x1;
-              float fy = y - y1;
-
-              int idx11 = (y1 * w + x1) * 3;
-              int idx12 = (y1 * w + x2) * 3;
-              int idx21 = (y2 * w + x1) * 3;
-              int idx22 = (y2 * w + x2) * 3;
-
-              for (int c = 0; c < 3; ++c) {
-                  float top = (1.0f - fx) * img[idx11 + c] + fx * img[idx12 + c];
-                  float bot = (1.0f - fx) * img[idx21 + c] + fx * img[idx22 + c];
-                  outRGB[c] = (1.0f - fy) * top + fy * bot;
-              }
-          }
-
-          extern "C" JNIEXPORT jobject JNICALL
-          Java_com_superzoom_app_SuperZoomNative_processBurstAndUpscale(
-                  JNIEnv* env,
-                  jobject /* this */,
-                  jobjectArray frame_bitmaps,
-                  jfloat zoom_factor,
-                  jfloat target_x_ratio,
-                  jfloat target_y_ratio,
-                  jint target_width,
-                  jint target_height) {
-
-              int frameCount = env->GetArrayLength(frame_bitmaps);
-              if (frameCount <= 0) return nullptr;
-
-              AndroidBitmapInfo info;
-              jobject firstBmp = env->GetObjectArrayElement(frame_bitmaps, 0);
-              AndroidBitmap_getInfo(env, firstBmp, &info);
-              env->DeleteLocalRef(firstBmp);
-
-              int srcW = info.width;
-              int srcH = info.height;
-
-              int cropW = (int)((float)srcW / zoom_factor);
-              int cropH = (int)((float)srcH / zoom_factor);
-              cropW = std::max(16, std::min(cropW, srcW));
-              cropH = std::max(16, std::min(cropH, srcH));
-
-              float centerX = (target_x_ratio >= 0) ? (target_x_ratio * srcW) : (srcW / 2.0f);
-              float centerY = (target_y_ratio >= 0) ? (target_y_ratio * srcH) : (srcH / 2.0f);
-
-              int startX = (int)(centerX - cropW / 2.0f);
-              int startY = (int)(centerY - cropH / 2.0f);
-              startX = std::max(0, std::min(startX, srcW - cropW));
-              startY = std::max(0, std::min(startY, srcH - cropH));
-
-              std::vector<std::vector<uint8_t>> rgbFrames;
-              std::vector<std::vector<float>> grayFrames;
-
-              // Extract only cropped region across all captured frames
-              for (int i = 0; i < frameCount; ++i) {
-                  jobject bmp = env->GetObjectArrayElement(frame_bitmaps, i);
-                  void* pixels = nullptr;
-                  if (AndroidBitmap_lockPixels(env, bmp, &pixels) >= 0) {
-                      const uint32_t* src32 = (const uint32_t*)pixels;
-                      std::vector<uint8_t> rgb(cropW * cropH * 3);
-                      std::vector<float> gray(cropW * cropH);
-
-                      for (int y = 0; y < cropH; ++y) {
-                          for (int x = 0; x < cropW; ++x) {
-                              uint32_t p = src32[(startY + y) * srcW + (startX + x)];
-                              uint8_t r = (p) & 0xFF;
-                              uint8_t g = (p >> 8) & 0xFF;
-                              uint8_t b = (p >> 16) & 0xFF;
-
-                              int idx = (y * cropW + x) * 3;
-                              rgb[idx] = r;
-                              rgb[idx + 1] = g;
-                              rgb[idx + 2] = b;
-                              gray[y * cropW + x] = 0.299f * r + 0.587f * g + 0.114f * b;
-                          }
-                      }
-                      rgbFrames.push_back(std::move(rgb));
-                      grayFrames.push_back(std::move(gray));
-                      AndroidBitmap_unlockPixels(env, bmp);
-                  }
-                  env->DeleteLocalRef(bmp);
-              }
-
-              if (rgbFrames.empty()) return nullptr;
-
-              // Reference frame is the first sharp anchor
-              std::vector<float> fusedRGB(cropW * cropH * 3, 0.0f);
-              float totalWeight = 0.0f;
-
-              for (size_t i = 0; i < rgbFrames.size(); ++i) {
-                  SubpixelShift shift = {0.0f, 0.0f};
-                  if (i > 0) {
-                      shift = calculateMicroShift(grayFrames[0], grayFrames[i], cropW, cropH);
-                  }
-
-                  // Accumulate true sub-pixel optical data
-                  for (int y = 0; y < cropH; ++y) {
-                      for (int x = 0; x < cropW; ++x) {
-                          float outColor[3];
-                          sampleBilinear(rgbFrames[i].data(), cropW, cropH, x + shift.dx, y + shift.dy, outColor);
-                          int idx = (y * cropW + x) * 3;
-                          fusedRGB[idx] += outColor[0];
-                          fusedRGB[idx + 1] += outColor[1];
-                          fusedRGB[idx + 2] += outColor[2];
-                      }
-                  }
-                  totalWeight += 1.0f;
-              }
-
-              std::vector<uint8_t> fusedBytes(cropW * cropH * 3);
-              for (size_t i = 0; i < fusedRGB.size(); ++i) {
-                  fusedBytes[i] = (uint8_t)std::min(255.0f, std::max(0.0f, fusedRGB[i] / totalWeight));
-              }
-
-              // On-Device Neural Super-Resolution via NCNN
-              std::vector<uint8_t> finalRGB;
-              int outW = cropW;
-              int outH = cropH;
-
-              if (g_sr_initialized) {
-                  ncnn::Mat in = ncnn::Mat::from_pixels(fusedBytes.data(), ncnn::Mat::PIXEL_RGB, cropW, cropH);
-                  ncnn::Extractor ex = g_sr_net.create_extractor();
-                  ex.input("data", in);
-                  ncnn::Mat out;
-                  ex.extract("output", out);
-
-                  outW = out.w;
-                  outH = out.h;
-                  finalRGB.resize(outW * outH * 3);
-                  out.to_pixels(finalRGB.data(), ncnn::Mat::PIXEL_RGB);
-              } else {
-                  // High-fidelity bicubic upscale + detail sharpening filter
-                  outW = target_width;
-                  outH = target_height;
-                  finalRGB.resize(outW * outH * 3);
-
-                  for (int y = 0; y < outH; ++y) {
-                      float srcY = (float)y * cropH / (float)outH;
-                      for (int x = 0; x < outW; ++x) {
-                          float srcX = (float)x * cropW / (float)outW;
-                          float col[3];
-                          sampleBilinear(fusedBytes.data(), cropW, cropH, srcX, srcY, col);
-                          int idx = (y * outW + x) * 3;
-                          finalRGB[idx] = (uint8_t)col[0];
-                          finalRGB[idx + 1] = (uint8_t)col[1];
-                          finalRGB[idx + 2] = (uint8_t)col[2];
-                      }
-                  }
-              }
-
-              // Construct Android ARGB_8888 Bitmap
-              jclass bitmapConfigClass = env->FindClass("android/graphics/Bitmap$Config");
-              jfieldID argb8888FieldID = env->GetStaticFieldID(bitmapConfigClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
-              jobject argb8888Config = env->GetStaticObjectField(bitmapConfigClass, argb8888FieldID);
-
-              jclass bitmapClass = env->FindClass("android/graphics/Bitmap");
-              jmethodID createBitmapMethod = env->GetStaticMethodID(
-                      bitmapClass, "createBitmap", "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
-
-              jobject outBitmap = env->CallStaticObjectMethod(
-                      bitmapClass, createBitmapMethod, outW, outH, argb8888Config);
-
-              void* outPixels = nullptr;
-              AndroidBitmap_lockPixels(env, outBitmap, &outPixels);
-              uint32_t* dst = (uint32_t*)outPixels;
-
-              for (int y = 0; y < outH; ++y) {
-                  for (int x = 0; x < outW; ++x) {
-                      int idx = (y * outW + x) * 3;
-                      uint32_t r = finalRGB[idx];
-                      uint32_t g = finalRGB[idx + 1];
-                      uint32_t b = finalRGB[idx + 2];
-                      dst[y * outW + x] = 0xFF000000 | (b << 16) | (g << 8) | r;
-                  }
-              }
-              AndroidBitmap_unlockPixels(env, outBitmap);
-
-              return outBitmap;
-          }
-          EOF
-
-      # -------------------------------------------------------------
-      # 9. KOTLIN UI, CAMERA BUFFER & INTERFACE
-      # -------------------------------------------------------------
-      - name: Write Kotlin Camera & Processing Code
-        run: |
-          cat << 'EOF' > app/src/main/java/com/superzoom/app/SuperZoomNative.kt
-          package com.superzoom.app
+          # NativeBridge.kt
+          cat > app/src/main/java/com/example/superzoom/NativeBridge.kt << 'EOF'
+          package com.example.superzoom
 
           import android.graphics.Bitmap
 
-          object SuperZoomNative {
+          object NativeBridge {
               init {
-                  System.loadLibrary("superzoom-native")
+                  System.loadLibrary("superzoom")
               }
 
-              external fun initModel(paramBytes: ByteArray, binBytes: ByteArray): Boolean
-              external fun detectMoonTarget(bitmap: Bitmap): FloatArray?
-              external fun processBurstAndUpscale(
+              external fun alignAndMerge(
                   frames: Array<Bitmap>,
-                  zoomFactor: Float,
-                  targetXRatio: Float,
-                  targetYRatio: Float,
-                  targetWidth: Int,
-                  targetHeight: Int
+                  cropX: Int,
+                  cropY: Int,
+                  cropWidth: Int,
+                  cropHeight: Int
               ): Bitmap?
+
+              external fun runSuperResolution(input: Bitmap): Bitmap?
           }
           EOF
 
-          cat << 'EOF' > app/src/main/java/com/superzoom/app/MainActivity.kt
-          package com.superzoom.app
+          # CameraController.kt
+          cat > app/src/main/java/com/example/superzoom/CameraController.kt << 'EOF'
+          package com.example.superzoom
 
-          import android.Manifest
-          import android.annotation.SuppressLint
-          import android.content.pm.PackageManager
+          import android.content.Context
           import android.graphics.Bitmap
-          import android.graphics.Matrix
-          import android.graphics.PointF
-          import android.os.Bundle
-          import android.view.MotionEvent
-          import android.view.View
-          import android.widget.Toast
-          import androidx.appcompat.app.AppCompatActivity
+          import android.util.Log
           import androidx.camera.core.*
           import androidx.camera.lifecycle.ProcessCameraProvider
-          import androidx.core.app.ActivityCompat
+          import androidx.camera.view.PreviewView
           import androidx.core.content.ContextCompat
-          import com.superzoom.app.databinding.ActivityMainBinding
-          import kotlinx.coroutines.*
-          import java.util.concurrent.ConcurrentLinkedQueue
-          import java.util.concurrent.ExecutorService
+          import androidx.lifecycle.LifecycleOwner
           import java.util.concurrent.Executors
 
-          class MainActivity : AppCompatActivity() {
+          class CameraController(
+              private val context: Context,
+              private val previewView: PreviewView,
+              private val lifecycleOwner: LifecycleOwner
+          ) {
+              private var imageCapture: ImageCapture? = null
+              private var imageAnalysis: ImageAnalysis? = null
+              private val cameraExecutor = Executors.newSingleThreadExecutor()
+              private val frameBuffer = ArrayDeque<Bitmap>(15)
+              private val bufferLock = Any()
 
-              private lateinit var binding: ActivityMainBinding
-              private lateinit var cameraExecutor: ExecutorService
-              private var cameraControl: CameraControl? = null
-              private var cameraInfo: CameraInfo? = null
-
-              private val burstBuffer = ConcurrentLinkedQueue<Bitmap>()
-              private val BUFFER_SIZE = 12
-              private var currentZoomFactor = 10.0f
-              private var isProcessing = false
-
-              private var autoMoonDetection = true
-              private var lockedTargetRatio: PointF? = null
-              private var smoothedTranslationX = 0f
-              private var smoothedTranslationY = 0f
-
-              @SuppressLint("ClickableViewAccessibility")
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  binding = ActivityMainBinding.inflate(layoutInflater)
-                  setContentView(binding.root)
-
-                  cameraExecutor = Executors.newSingleThreadExecutor()
-
-                  loadNeuralModels()
-                  setupUI()
-
-                  if (allPermissionsGranted()) {
-                      startCamera()
-                  } else {
-                      ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS)
-                  }
-              }
-
-              private fun loadNeuralModels() {
-                  CoroutineScope(Dispatchers.IO).launch {
-                      try {
-                          val paramBytes = assets.open("models/realesrgan.param").readBytes()
-                          val binBytes = assets.open("models/realesrgan.bin").readBytes()
-                          SuperZoomNative.initModel(paramBytes, binBytes)
-                      } catch (e: Exception) {
-                          e.printStackTrace()
-                      }
-                  }
-              }
-
-              @SuppressLint("ClickableViewAccessibility")
-              private fun setupUI() {
-                  binding.zoomSlider.addOnChangeListener { _, value, _ ->
-                      currentZoomFactor = value
-                      binding.zoomLevelText.text = String.format("%.1fx Zoom", currentZoomFactor)
-                      
-                      cameraInfo?.zoomState?.value?.let { state ->
-                          val hardwareZoom = (currentZoomFactor / 10.0f).coerceIn(state.minZoomRatio, state.maxZoomRatio)
-                          cameraControl?.setZoomRatio(hardwareZoom)
-                      }
-                  }
-
-                  binding.toggleMoonModeBtn.setOnClickListener {
-                      autoMoonDetection = !autoMoonDetection
-                      binding.toggleMoonModeBtn.text = if (autoMoonDetection) "Auto Moon: ON" else "Auto Moon: OFF"
-                      if (!autoMoonDetection && lockedTargetRatio == null) {
-                          binding.lockReticle.visibility = View.GONE
-                      }
-                  }
-
-                  binding.viewFinder.setOnTouchListener { _, event ->
-                      if (event.action == MotionEvent.ACTION_DOWN) {
-                          autoMoonDetection = false
-                          binding.toggleMoonModeBtn.text = "Auto Moon: OFF"
-
-                          val normX = event.x / binding.viewFinder.width.toFloat()
-                          val normY = event.y / binding.viewFinder.height.toFloat()
-                          lockedTargetRatio = PointF(normX, normY)
-
-                          binding.lockReticle.x = event.x - (binding.lockReticle.width / 2f)
-                          binding.lockReticle.y = event.y - (binding.lockReticle.height / 2f)
-                          binding.lockReticle.visibility = View.VISIBLE
-
-                          Toast.makeText(this, "Target Locked", Toast.LENGTH_SHORT).show()
-                      }
-                      true
-                  }
-
-                  binding.shutterButton.setOnClickListener {
-                      if (!isProcessing && burstBuffer.isNotEmpty()) {
-                          captureAndRemaster()
-                      } else {
-                          Toast.makeText(this, "Buffering frames...", Toast.LENGTH_SHORT).show()
-                      }
-                  }
-
-                  binding.closePreviewButton.setOnClickListener {
-                      binding.resultImageView.visibility = View.GONE
-                      binding.closePreviewButton.visibility = View.GONE
-                      binding.previewContainer.visibility = View.VISIBLE
-                  }
-              }
-
-              private fun startCamera() {
-                  val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+              fun startCamera() {
+                  val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
                   cameraProviderFuture.addListener({
                       val cameraProvider = cameraProviderFuture.get()
 
-                      val preview = Preview.Builder().build().also {
-                          it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
-                      }
+                      val preview = Preview.Builder()
+                          .build()
+                          .also { it.setSurfaceProvider(previewView.surfaceProvider) }
 
-                      val imageAnalyzer = ImageAnalysis.Builder()
-                          .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                      imageCapture = ImageCapture.Builder()
+                          .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                          .build()
+
+                      imageAnalysis = ImageAnalysis.Builder()
                           .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                           .build()
-                          .also {
-                              it.setAnalyzer(cameraExecutor) { imageProxy ->
-                                  if (!isProcessing) {
-                                      val bmp = imageProxy.toBitmap()
-                                      val rotation = imageProxy.imageInfo.rotationDegrees
-                                      val rotated = if (rotation != 0) {
-                                          val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-                                          Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
-                                      } else bmp
-
-                                      if (autoMoonDetection) {
-                                          val coords = SuperZoomNative.detectMoonTarget(rotated)
-                                          if (coords != null && coords[0] >= 0 && coords[1] >= 0) {
-                                              val moonRatioX = coords[0] / rotated.width.toFloat()
-                                              val moonRatioY = coords[1] / rotated.height.toFloat()
-                                              lockedTargetRatio = PointF(moonRatioX, moonRatioY)
-
-                                              runOnUiThread {
-                                                  val screenTargetX = moonRatioX * binding.viewFinder.width
-                                                  val screenTargetY = moonRatioY * binding.viewFinder.height
-                                                  binding.lockReticle.x = screenTargetX - (binding.lockReticle.width / 2f)
-                                                  binding.lockReticle.y = screenTargetY - (binding.lockReticle.height / 2f)
-                                                  binding.lockReticle.visibility = View.VISIBLE
-
-                                                  val deltaX = (binding.viewFinder.width / 2f) - screenTargetX
-                                                  val deltaY = (binding.viewFinder.height / 2f) - screenTargetY
-                                                  smoothedTranslationX += (deltaX - smoothedTranslationX) * 0.25f
-                                                  smoothedTranslationY += (deltaY - smoothedTranslationY) * 0.25f
-
-                                                  binding.viewFinder.translationX = smoothedTranslationX * 0.5f
-                                                  binding.viewFinder.translationY = smoothedTranslationY * 0.5f
-                                              }
-                                          }
-                                      }
-
-                                      burstBuffer.offer(rotated)
-                                      while (burstBuffer.size > BUFFER_SIZE) {
-                                          val old = burstBuffer.poll()
-                                          if (old != null && old != rotated) old.recycle()
-                                      }
+                          .also { analysis ->
+                              analysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                                  val bitmap = imageProxy.toBitmap()
+                                  synchronized(bufferLock) {
+                                      if (frameBuffer.size >= 15) frameBuffer.removeFirst()
+                                      frameBuffer.addLast(bitmap)
                                   }
                                   imageProxy.close()
                               }
@@ -939,93 +313,397 @@ jobs:
 
                       try {
                           cameraProvider.unbindAll()
-                          val camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
-                          cameraControl = camera.cameraControl
-                          cameraInfo = camera.cameraInfo
+                          val camera = cameraProvider.bindToLifecycle(
+                              lifecycleOwner, cameraSelector, preview, imageCapture, imageAnalysis
+                          )
+
+                          val stabilizationSupported = camera.cameraInfo.isPreviewStabilizationSupported
+                          if (stabilizationSupported) {
+                              preview.setPreviewStabilizationEnabled(true)
+                              Log.d("CameraController", "Preview stabilization enabled")
+                          }
                       } catch (e: Exception) {
-                          e.printStackTrace()
+                          Log.e("CameraController", "Use case binding failed", e)
                       }
-                  }, ContextCompat.getMainExecutor(this))
+                  }, ContextCompat.getMainExecutor(context))
               }
 
-              private fun captureAndRemaster() {
-                  isProcessing = true
-                  binding.progressBar.visibility = View.VISIBLE
-                  binding.statusText.text = "Aligning multi-frames & applying AI..."
-                  binding.statusText.visibility = View.VISIBLE
-
-                  val framesSnapshot = burstBuffer.toTypedArray()
-                  val target = lockedTargetRatio
-
-                  CoroutineScope(Dispatchers.Default).launch {
-                      val resultBitmap = SuperZoomNative.processBurstAndUpscale(
-                          framesSnapshot,
-                          currentZoomFactor,
-                          target?.x ?: -1.0f,
-                          target?.y ?: -1.0f,
-                          1080,
-                          1920
-                      )
-
-                      withContext(Dispatchers.Main) {
-                          binding.progressBar.visibility = View.GONE
-                          binding.statusText.visibility = View.GONE
-                          isProcessing = false
-
-                          if (resultBitmap != null) {
-                              binding.previewContainer.visibility = View.GONE
-                              binding.resultImageView.setImageBitmap(resultBitmap)
-                              binding.resultImageView.visibility = View.VISIBLE
-                              binding.closePreviewButton.visibility = View.VISIBLE
-                          } else {
-                              Toast.makeText(this@MainActivity, "Processing failed", Toast.LENGTH_SHORT).show()
-                          }
+              fun captureBurst(onBurstReady: (Array<Bitmap>) -> Unit) {
+                  synchronized(bufferLock) {
+                      val frames = frameBuffer.toTypedArray()
+                      if (frames.isNotEmpty()) {
+                          onBurstReady(frames)
                       }
                   }
               }
 
-              private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
-                  ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
+              fun shutdown() {
+                  cameraExecutor.shutdown()
+              }
+          }
+          EOF
+
+          # TrackingOverlay.kt
+          cat > app/src/main/java/com/example/superzoom/TrackingOverlay.kt << 'EOF'
+          package com.example.superzoom
+
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.RectF
+          import android.util.AttributeSet
+          import android.view.MotionEvent
+          import android.view.View
+
+          class TrackingOverlay @JvmOverloads constructor(
+              context: Context, attrs: AttributeSet? = null
+          ) : View(context, attrs) {
+
+              private val boxPaint = Paint().apply {
+                  color = Color.GREEN
+                  style = Paint.Style.STROKE
+                  strokeWidth = 5f
+              }
+              private val cornerPaint = Paint().apply {
+                  color = Color.GREEN
+                  style = Paint.Style.FILL
               }
 
-              override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-                  if (requestCode == REQUEST_CODE_PERMISSIONS) {
-                      if (allPermissionsGranted()) {
-                          startCamera()
-                      } else {
-                          Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show()
-                          finish()
+              private var trackingRect = RectF(200f, 200f, 600f, 600f)
+              private var dragCorner = -1
+
+              var onRectChanged: ((RectF) -> Unit)? = null
+
+              override fun onDraw(canvas: Canvas) {
+                  super.onDraw(canvas)
+                  canvas.drawRect(trackingRect, boxPaint)
+
+                  val handleRadius = 20f
+                  canvas.drawCircle(trackingRect.left, trackingRect.top, handleRadius, cornerPaint)
+                  canvas.drawCircle(trackingRect.right, trackingRect.top, handleRadius, cornerPaint)
+                  canvas.drawCircle(trackingRect.left, trackingRect.bottom, handleRadius, cornerPaint)
+                  canvas.drawCircle(trackingRect.right, trackingRect.bottom, handleRadius, cornerPaint)
+              }
+
+              override fun onTouchEvent(event: MotionEvent): Boolean {
+                  when (event.action) {
+                      MotionEvent.ACTION_DOWN -> {
+                          dragCorner = -1
+                          val threshold = 50f
+                          if (dist(event.x, event.y, trackingRect.left, trackingRect.top) < threshold) dragCorner = 0
+                          else if (dist(event.x, event.y, trackingRect.right, trackingRect.top) < threshold) dragCorner = 1
+                          else if (dist(event.x, event.y, trackingRect.left, trackingRect.bottom) < threshold) dragCorner = 2
+                          else if (dist(event.x, event.y, trackingRect.right, trackingRect.bottom) < threshold) dragCorner = 3
+                          else if (trackingRect.contains(event.x, event.y)) dragCorner = 4
+                      }
+                      MotionEvent.ACTION_MOVE -> {
+                          when (dragCorner) {
+                              0 -> { trackingRect.left = event.x; trackingRect.top = event.y }
+                              1 -> { trackingRect.right = event.x; trackingRect.top = event.y }
+                              2 -> { trackingRect.left = event.x; trackingRect.bottom = event.y }
+                              3 -> { trackingRect.right = event.x; trackingRect.bottom = event.y }
+                              4 -> {
+                                  val dx = event.x - trackingRect.centerX()
+                                  val dy = event.y - trackingRect.centerY()
+                                  trackingRect.offset(dx, dy)
+                              }
+                          }
+                          invalidate()
+                          onRectChanged?.invoke(RectF(trackingRect))
+                      }
+                      MotionEvent.ACTION_UP -> dragCorner = -1
+                  }
+                  return true
+              }
+
+              private fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+                  return Math.hypot((x1 - x2).toDouble(), (y1 - y2).toDouble()).toFloat()
+              }
+          }
+          EOF
+
+          # MainActivity.kt
+          cat > app/src/main/java/com/example/superzoom/MainActivity.kt << 'EOF'
+          package com.example.superzoom
+
+          import android.graphics.Bitmap
+          import android.os.Bundle
+          import android.util.Log
+          import android.widget.Button
+          import android.widget.ImageView
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.camera.view.PreviewView
+
+          class MainActivity : AppCompatActivity() {
+
+              private lateinit var previewView: PreviewView
+              private lateinit var trackingOverlay: TrackingOverlay
+              private lateinit var resultImage: ImageView
+              private lateinit var cameraController: CameraController
+              private lateinit var captureButton: Button
+              private var currentCropRect: android.graphics.RectF? = null
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+
+                  previewView = findViewById(R.id.previewView)
+                  trackingOverlay = findViewById(R.id.trackingOverlay)
+                  resultImage = findViewById(R.id.resultImage)
+                  captureButton = findViewById(R.id.captureButton)
+
+                  cameraController = CameraController(this, previewView, this)
+                  cameraController.startCamera()
+
+                  trackingOverlay.onRectChanged = { rect -> currentCropRect = rect }
+
+                  captureButton.setOnClickListener { captureAndProcess() }
+              }
+
+              private fun captureAndProcess() {
+                  cameraController.captureBurst { frames ->
+                      if (frames.size < 2) {
+                          Log.e("MainActivity", "Not enough frames")
+                          return@captureBurst
+                      }
+
+                      val rect = currentCropRect ?: android.graphics.RectF(
+                          0f, 0f, frames[0].width.toFloat(), frames[0].height.toFloat()
+                      )
+
+                      val cropX = rect.left.toInt().coerceAtLeast(0)
+                      val cropY = rect.top.toInt().coerceAtLeast(0)
+                      val cropW = rect.width().toInt().coerceAtMost(frames[0].width - cropX)
+                      val cropH = rect.height().toInt().coerceAtMost(frames[0].height - cropY)
+
+                      if (cropW <= 0 || cropH <= 0) return@captureBurst
+
+                      val merged = NativeBridge.alignAndMerge(frames, cropX, cropY, cropW, cropH)
+
+                      if (merged != null) {
+                          val upscaled = NativeBridge.runSuperResolution(merged)
+                          runOnUiThread { resultImage.setImageBitmap(upscaled ?: merged) }
                       }
                   }
               }
 
               override fun onDestroy() {
                   super.onDestroy()
-                  cameraExecutor.shutdown()
-              }
-
-              companion object {
-                  private const val REQUEST_CODE_PERMISSIONS = 10
-                  private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+                  cameraController.shutdown()
               }
           }
           EOF
 
-      # -------------------------------------------------------------
-      # 10. SETUP GRADLE 8.4 WRAPPER & ASSEMBLE APK
-      # -------------------------------------------------------------
-      - name: Build APK with Gradle Wrapper
+      # ------------------------------------------------------------
+      # 4. Native C++ code
+      # ------------------------------------------------------------
+      - name: Create native headers and sources
         run: |
-          gradle wrapper --gradle-version 8.4 --distribution-type bin
-          chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          cat > app/src/main/cpp/super_zoom.h << 'EOF'
+          #ifndef SUPERZOOM_H
+          #define SUPERZOOM_H
+          #include <jni.h>
+          #include <opencv2/core.hpp>
+          #include <vector>
+          extern "C" {
+          JNIEXPORT jobject JNICALL
+          Java_com_example_superzoom_NativeBridge_alignAndMerge(
+                  JNIEnv* env, jobject thiz,
+                  jobjectArray frames, jint cropX, jint cropY,
+                  jint cropWidth, jint cropHeight);
+          JNIEXPORT jobject JNICALL
+          Java_com_example_superzoom_NativeBridge_runSuperResolution(
+                  JNIEnv* env, jobject thiz, jobject inputBitmap);
+          }
+          #endif
+          EOF
 
-      # -------------------------------------------------------------
-      # 11. UPLOAD APK ARTIFACT
-      # -------------------------------------------------------------
-      - name: Upload Downloadable APK
+          cat > app/src/main/cpp/super_zoom.cpp << 'EOF'
+          #include "super_zoom.h"
+          #include <opencv2/imgproc.hpp>
+          #include <android/bitmap.h>
+          #include <android/log.h>
+          #include <ncnn/net.h>
+
+          #define LOG_TAG "SuperZoom"
+          #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+          #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+          cv::Mat bitmapToMat(JNIEnv* env, jobject bitmap) {
+              AndroidBitmapInfo info;
+              if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) return {};
+              if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return {};
+              void* pixels;
+              if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) return {};
+              cv::Mat mat(info.height, info.width, CV_8UC4, pixels);
+              cv::Mat bgr;
+              cv::cvtColor(mat, bgr, cv::COLOR_RGBA2BGR);
+              AndroidBitmap_unlockPixels(env, bitmap);
+              return bgr;
+          }
+
+          jobject matToBitmap(JNIEnv* env, const cv::Mat& mat) {
+              jclass bitmapClass = env->FindClass("android/graphics/Bitmap");
+              jmethodID createBitmap = env->GetStaticMethodID(bitmapClass, "createBitmap",
+                  "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
+              jclass configClass = env->FindClass("android/graphics/Bitmap$Config");
+              jfieldID argb8888 = env->GetStaticFieldID(configClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
+              jobject config = env->GetStaticObjectField(configClass, argb8888);
+              jobject bitmap = env->CallStaticObjectMethod(bitmapClass, createBitmap, mat.cols, mat.rows, config);
+              void* pixels;
+              AndroidBitmap_lockPixels(env, bitmap, &pixels);
+              cv::Mat rgba;
+              cv::cvtColor(mat, rgba, cv::COLOR_BGR2RGBA);
+              memcpy(pixels, rgba.data, rgba.total() * rgba.elemSize());
+              AndroidBitmap_unlockPixels(env, bitmap);
+              return bitmap;
+          }
+
+          cv::Mat estimateShift(const cv::Mat& ref, const cv::Mat& target) {
+              // Placeholder: identity for stability. Production would use ORB + RANSAC.
+              return cv::Mat::eye(3, 3, CV_64F);
+          }
+
+          extern "C" JNIEXPORT jobject JNICALL
+          Java_com_example_superzoom_NativeBridge_alignAndMerge(
+                  JNIEnv* env, jobject thiz, jobjectArray frames,
+                  jint cropX, jint cropY, jint cropWidth, jint cropHeight) {
+
+              int numFrames = env->GetArrayLength(frames);
+              if (numFrames == 0) return nullptr;
+
+              std::vector<cv::Mat> mats;
+              for (int i = 0; i < numFrames; ++i) {
+                  jobject bitmap = env->GetObjectArrayElement(frames, i);
+                  cv::Mat mat = bitmapToMat(env, bitmap);
+                  if (!mat.empty()) mats.push_back(mat);
+                  env->DeleteLocalRef(bitmap);
+              }
+              if (mats.empty()) return nullptr;
+
+              cv::Rect cropRect(cropX, cropY, cropWidth, cropHeight);
+              cv::Rect validRect = cropRect & cv::Rect(0, 0, mats[0].cols, mats[0].rows);
+              if (validRect.area() == 0) return nullptr;
+
+              cv::Mat ref = mats[0](validRect).clone();
+              cv::Mat accumulator = cv::Mat::zeros(ref.size(), CV_32FC3);
+
+              for (size_t i = 0; i < mats.size(); ++i) {
+                  cv::Mat warped;
+                  if (i == 0) {
+                      warped = ref;
+                  } else {
+                      cv::Mat H = estimateShift(ref, mats[i]);
+                      cv::warpPerspective(mats[i], warped, H, ref.size());
+                  }
+                  cv::accumulate(warped, accumulator);
+              }
+
+              cv::Mat merged;
+              accumulator.convertTo(merged, CV_8UC3, 1.0 / mats.size());
+              return matToBitmap(env, merged);
+          }
+
+          extern "C" JNIEXPORT jobject JNICALL
+          Java_com_example_superzoom_NativeBridge_runSuperResolution(
+                  JNIEnv* env, jobject thiz, jobject inputBitmap) {
+
+              cv::Mat input = bitmapToMat(env, inputBitmap);
+              if (input.empty()) return nullptr;
+
+              ncnn::Net srNet;
+              srNet.opt.use_vulkan_compute = true;
+              srNet.opt.use_fp16_storage = true;
+              srNet.opt.use_fp16_arithmetic = true;
+
+              int ret = srNet.load_param("realesrgan-x4.param");
+              if (ret != 0) {
+                  LOGE("Failed to load param");
+                  return matToBitmap(env, input);
+              }
+              ret = srNet.load_model("realesrgan-x4.bin");
+              if (ret != 0) {
+                  LOGE("Failed to load bin");
+                  return matToBitmap(env, input);
+              }
+
+              ncnn::Mat in = ncnn::Mat::from_pixels(input.data, ncnn::Mat::PIXEL_BGR2RGB, input.cols, input.rows);
+              const float norm_vals[3] = {1 / 255.f, 1 / 255.f, 1 / 255.f};
+              in.substract_mean_normalize(0, norm_vals);
+
+              ncnn::Extractor ex = srNet.create_extractor();
+              ex.input("data", in);
+              ncnn::Mat out;
+              ex.extract("output", out);
+
+              cv::Mat output(out.h, out.w, CV_8UC3);
+              out.to_pixels(output.data, ncnn::Mat::PIXEL_RGB2BGR);
+              return matToBitmap(env, output);
+          }
+          EOF
+
+      # ------------------------------------------------------------
+      # 5. CMakeLists.txt
+      # ------------------------------------------------------------
+      - name: Create CMakeLists.txt
+        run: |
+          cat > app/src/main/cpp/CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.22.1)
+          project("superzoom")
+          set(CMAKE_CXX_STANDARD 17)
+
+          # OpenCV (installed below)
+          set(OpenCV_DIR "${CMAKE_SOURCE_DIR}/opencv/sdk/native/jni")
+          find_package(OpenCV REQUIRED)
+          include_directories(${OpenCV_INCLUDE_DIRS})
+
+          # NCNN (installed below)
+          set(ncnn_DIR "${CMAKE_SOURCE_DIR}/ncnn/${ANDROID_ABI}/lib/cmake/ncnn")
+          find_package(ncnn REQUIRED)
+          include_directories(${NCNN_INCLUDE_DIRS})
+
+          add_library(superzoom SHARED super_zoom.cpp)
+          target_link_libraries(superzoom ${OpenCV_LIBS} ncnn android log)
+          EOF
+
+      # ------------------------------------------------------------
+      # 6. Download prebuilt native libraries
+      # ------------------------------------------------------------
+      - name: Download OpenCV Android SDK
+        run: |
+          wget -q https://github.com/opencv/opencv/releases/download/${{ env.OPENCV_VERSION }}/opencv-${{ env.OPENCV_VERSION }}-android-sdk.zip
+          unzip -q opencv-${{ env.OPENCV_VERSION }}-android-sdk.zip -d app/src/main/cpp
+          # The SDK extracts as OpenCV-android-sdk; CMake expects 'opencv'
+          if [ -d "app/src/main/cpp/OpenCV-android-sdk" ]; then
+              mv app/src/main/cpp/OpenCV-android-sdk app/src/main/cpp/opencv
+          fi
+
+      - name: Download NCNN Vulkan binaries
+        run: |
+          wget -q https://github.com/Tencent/ncnn/releases/download/${{ env.NCNN_VERSION }}/ncnn-${{ env.NCNN_VERSION }}-android-vulkan.zip
+          unzip -q ncnn-${{ env.NCNN_VERSION }}-android-vulkan.zip -d app/src/main/cpp
+          # The zip extracts to ncnn-YYYYMMDD-android-vulkan; rename to 'ncnn'
+          NCNN_DIR=$(find app/src/main/cpp -maxdepth 1 -type d -name "ncnn-*-android-vulkan" | head -n 1)
+          if [ -n "$NCNN_DIR" ]; then
+              mv "$NCNN_DIR" app/src/main/cpp/ncnn
+          fi
+
+      # ------------------------------------------------------------
+      # 7. Placeholder for Real-ESRGAN model
+      # ------------------------------------------------------------
+      - name: Create assets placeholder
+        run: |
+          echo "Place your Real-ESRGAN NCNN model files here (realesrgan-x4.param and .bin)." > app/src/main/assets/README.txt
+
+      # ------------------------------------------------------------
+      # 8. Build the APK
+      # ------------------------------------------------------------
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: 100x-SuperZoom-APK
-          path: app/build/outputs/apk/release/*.apk
+          name: SuperZoom-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
