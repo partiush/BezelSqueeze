@@ -1,4 +1,4 @@
-name: Build 200x Ultra Zoom AI Camera APK (Pro Moon Edition)
+name: Build 200x Ultra Zoom AI Camera APK (Pro Moon & Anti-Crash Edition)
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
       with:
         packages: 'platforms;android-35 build-tools;35.0.0'
 
-    - name: Install Tools & Setup NDK/CMake
+    - name: Install Tools, Stop Daemons & Setup NDK/CMake
       run: |
         set -euo pipefail
         sudo apt-get update -qq
@@ -61,7 +61,7 @@ jobs:
           return 1
         }
 
-        # 1. OpenCV SDK
+        # 1. OpenCV Android SDK
         download_file "/tmp/opencv.zip" \
           "https://github.com/opencv/opencv/releases/download/4.11.0/opencv-4.11.0-android-sdk.zip" \
           "https://github.com/opencv/opencv/releases/download/4.10.0/opencv-4.10.0-android-sdk.zip"
@@ -73,7 +73,7 @@ jobs:
           "https://github.com/Tencent/ncnn/releases/download/20240820/ncnn-20240820-android-vulkan.zip"
         unzip -q /tmp/ncnn.zip -d /tmp/
 
-        # 3. Offline AI Super-Resolution Models (~65MB to restore full AI capability)
+        # 3. Offline AI Super-Resolution Model weights (~65MB)
         mkdir -p app/src/main/assets/models
         download_file "app/src/main/assets/models/realesrgan-x4plus.param" \
           "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.param" \
@@ -91,10 +91,13 @@ jobs:
         NCNN_EXTRACTED=$(find /tmp -maxdepth 1 -type d -name "ncnn-*-android-vulkan" | head -n 1)
         cp -r "$NCNN_EXTRACTED" app/src/main/cpp/ncnn
 
-        # CRITICAL FIX 1: Copy libopencv_java4.so directly into jniLibs so the APK packages it and never crashes with UnsatisfiedLinkError
-        cp app/src/main/cpp/opencv/sdk/native/libs/arm64-v8a/libopencv_java4.so app/src/main/jniLibs/arm64-v8a/
+        # CRITICAL FIX 1: Package ALL native shared libraries so Android never crashes with UnsatisfiedLinkError
+        echo "Bundling libopencv_java4.so, libc++_shared.so, and libomp.so into jniLibs/arm64-v8a..."
+        find /tmp/OpenCV-android-sdk -name "libopencv_java4.so" -exec cp {} app/src/main/jniLibs/arm64-v8a/ \;
+        find "$ANDROID_HOME/ndk/27.2.12479018" -name "libc++_shared.so" | grep "aarch64" | head -n 1 | xargs -I {} cp {} app/src/main/jniLibs/arm64-v8a/
+        find "$ANDROID_HOME/ndk/27.2.12479018" -name "libomp.so" | grep "aarch64" | head -n 1 | xargs -I {} cp {} app/src/main/jniLibs/arm64-v8a/
 
-        # CRITICAL FIX 2: Patch ncnn.cmake to prevent stripping RTTI/Exceptions needed by OpenCV
+        # CRITICAL FIX 2: Patch ncnn.cmake to allow RTTI and exceptions required by OpenCV
         find app/src/main/cpp/ncnn -name "ncnn.cmake" -exec sed -i 's/INTERFACE_COMPILE_OPTIONS "-fno-rtti;-fno-exceptions"//g' {} \;
 
         cat << 'EOF' > settings.gradle
@@ -130,8 +133,8 @@ jobs:
                 applicationId "com.example.zoomcamera"
                 minSdk 26
                 targetSdk 35
-                versionCode 4
-                versionName "4.0-ProMoon200x"
+                versionCode 5
+                versionName "5.0-Universal200x"
                 ndk { abiFilters 'arm64-v8a' }
                 externalNativeBuild {
                     cmake {
@@ -189,8 +192,8 @@ jobs:
                 android:allowBackup="true"
                 android:largeHeap="true"
                 android:hardwareAccelerated="true"
-                android:label="200x Pro Moon Cam"
-                android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+                android:label="200x Pro Camera"
+                android:theme="@style/AppTheme">
                 <activity
                     android:name=".MainActivity"
                     android:exported="true"
@@ -204,11 +207,14 @@ jobs:
         </manifest>
         EOF
 
+        # CRITICAL FIX 3: Clean, non-crashing Material 3 Theme with valid inheritance
         cat << 'EOF' > app/src/main/res/values/themes.xml
         <resources>
-            <style name="Theme.Material3.DayNight.NoActionBar" parent="Theme.Material3.Dark.NoActionBar">
+            <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
                 <item name="android:statusBarColor">#000000</item>
                 <item name="android:navigationBarColor">#000000</item>
+                <item name="android:windowBackground">#000000</item>
+                <item name="colorPrimary">#FFD600</item>
             </style>
         </resources>
         EOF
@@ -231,7 +237,7 @@ jobs:
             android:layout_height="match_parent"
             android:background="#000000">
 
-            <!-- Pro Viewport Frame: dynamically sized to 4:3, 16:9, 1:1, or FULL to eliminate distortion -->
+            <!-- Responsive Viewport Container: dynamically resized for 4:3, 16:9, 1:1, or FULL to eliminate stretching -->
             <FrameLayout
                 android:id="@+id/cameraViewportFrame"
                 android:layout_width="0dp"
@@ -241,9 +247,9 @@ jobs:
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent">
 
-                <!-- Hardware TextureView: 60 FPS GPU Sampling Transform (Zero Lag, No Canvas Scaling Crashes) -->
-                <TextureView
-                    android:id="@+id/liveTextureView"
+                <!-- Native CameraX PreviewView with hardware acceleration for zero lag -->
+                <androidx.camera.view.PreviewView
+                    android:id="@+id/previewView"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent" />
 
@@ -268,42 +274,41 @@ jobs:
 
                 <Button
                     android:id="@+id/btnAspectRatio"
-                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="wrap_content"
                     android:layout_height="38dp"
                     android:paddingHorizontal="12dp"
                     android:text="4:3"
                     android:textColor="#FFFFFF"
-                    android:textSize="12sp" />
+                    android:textSize="12sp"
+                    android:backgroundTint="#333333" />
 
                 <!-- Dedicated Samsung-Style Moon Mode Toggle -->
                 <Button
                     android:id="@+id/btnMoonMode"
-                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="wrap_content"
                     android:layout_height="38dp"
                     android:layout_marginStart="8dp"
                     android:paddingHorizontal="10dp"
                     android:text="🌕 MOON: OFF"
                     android:textColor="#FFD600"
-                    android:textSize="11sp" />
+                    android:textSize="11sp"
+                    android:backgroundTint="#222222" />
 
                 <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
 
                 <Button
                     android:id="@+id/btnFlash"
-                    style="@style/Widget.Material3.Button.TextButton"
                     android:layout_width="wrap_content"
                     android:layout_height="38dp"
                     android:text="⚡ OFF"
                     android:textColor="#FFFFFF"
-                    android:textSize="12sp" />
+                    android:textSize="12sp"
+                    android:backgroundTint="#333333" />
             </LinearLayout>
 
             <!-- Dismiss Target Lock Chip -->
             <Button
                 android:id="@+id/btnDismissLock"
-                style="@style/Widget.Material3.Button.ElevatedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:layout_marginTop="8dp"
@@ -421,12 +426,12 @@ jobs:
 
                     <Button
                         android:id="@+id/btnFlip"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:padding="0dp"
                         android:text="🔄"
-                        android:textColor="#FFFFFF" />
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#333333" />
 
                     <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
 
@@ -531,7 +536,6 @@ jobs:
         import android.graphics.Bitmap
         import android.graphics.Matrix
         import android.graphics.Rect
-        import android.graphics.SurfaceTexture
         import android.hardware.Sensor
         import android.hardware.SensorEvent
         import android.hardware.SensorEventListener
@@ -547,6 +551,7 @@ jobs:
         import androidx.camera.camera2.interop.Camera2Interop
         import androidx.camera.core.*
         import androidx.camera.lifecycle.ProcessCameraProvider
+        import androidx.camera.view.PreviewView
         import androidx.cardview.widget.CardView
         import androidx.constraintlayout.widget.ConstraintLayout
         import androidx.core.app.ActivityCompat
@@ -572,7 +577,7 @@ jobs:
 
         class MainActivity : AppCompatActivity(), SensorEventListener {
 
-            private lateinit var liveTextureView: TextureView
+            private lateinit var previewView: PreviewView
             private lateinit var overlayView: CameraOverlayView
             private lateinit var cameraViewportFrame: FrameLayout
             private lateinit var pipContainer: CardView
@@ -617,7 +622,7 @@ jobs:
                 super.onCreate(savedInstanceState)
                 setContentView(R.layout.activity_main)
 
-                liveTextureView = findViewById(R.id.liveTextureView)
+                previewView = findViewById(R.id.previewView)
                 overlayView = findViewById(R.id.overlayView)
                 cameraViewportFrame = findViewById(R.id.cameraViewportFrame)
                 pipContainer = findViewById(R.id.pipContainer)
@@ -631,25 +636,23 @@ jobs:
                 seekZoom = findViewById(R.id.seekZoom)
                 ivGallery = findViewById(R.id.ivGallery)
 
+                previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+
                 sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
                 gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
-                safeInitNativeAI()
+                if (isNativeLoaded) {
+                    try { nativeInitModels(assets) } catch (_: Throwable) {}
+                }
+
                 setupUIControls()
                 adjustViewportDimensions()
 
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                    setupTextureListenerAndStart()
+                    startCamera()
                 } else {
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
-                }
-            }
-
-            private fun safeInitNativeAI() {
-                try {
-                    nativeInitModels(assets)
-                } catch (e: Throwable) {
-                    Toast.makeText(this, "AI Models initializing...", Toast.LENGTH_SHORT).show()
                 }
             }
 
@@ -661,23 +664,6 @@ jobs:
             override fun onPause() {
                 super.onPause()
                 sensorManager.unregisterListener(this)
-            }
-
-            private fun setupTextureListenerAndStart() {
-                if (liveTextureView.isAvailable) {
-                    startCamera()
-                } else {
-                    liveTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                        override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                            startCamera()
-                        }
-                        override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
-                            updateGpuSamplingTransform()
-                        }
-                        override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean = true
-                        override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
-                    }
-                }
             }
 
             private fun setupUIControls() {
@@ -695,6 +681,7 @@ jobs:
                 btnMoonMode.setOnClickListener {
                     isMoonMode = !isMoonMode
                     btnMoonMode.text = if (isMoonMode) "🌕 MOON: ON" else "🌕 MOON: OFF"
+                    btnMoonMode.setTextColor(if (isMoonMode) android.graphics.Color.parseColor("#00E676") else android.graphics.Color.parseColor("#FFD600"))
                     applyMoonExposureSettings()
                     overlayView.updateOverlay(isTargetLocked, normLockX, normLockY, isMoonMode, totalZoom >= 15f)
                     Toast.makeText(this, if (isMoonMode) "Moon Mode Active: Auto-Underexposure & Crater Enhancer" else "Normal Mode", Toast.LENGTH_SHORT).show()
@@ -757,15 +744,15 @@ jobs:
                             clearTargetLock()
                             return true
                         }
-                        val factory = SurfaceOrientedMeteringPointFactory(liveTextureView.width.toFloat(), liveTextureView.height.toFloat())
+                        val factory = previewView.meteringPointFactory
                         val pt = factory.createPoint(e.x, e.y)
                         camera?.cameraControl?.startFocusAndMetering(FocusMeteringAction.Builder(pt).build())
                         return true
                     }
 
                     override fun onLongPress(e: MotionEvent) {
-                        val normX = (e.x / liveTextureView.width.toFloat()).coerceIn(0.1f, 0.9f)
-                        val normY = (e.y / liveTextureView.height.toFloat()).coerceIn(0.1f, 0.9f)
+                        val normX = (e.x / previewView.width.toFloat()).coerceIn(0.1f, 0.9f)
+                        val normY = (e.y / previewView.height.toFloat()).coerceIn(0.1f, 0.9f)
 
                         normLockX = normX
                         normLockY = normY
@@ -773,13 +760,15 @@ jobs:
                         gyroCompY = 0f
                         isTargetLocked = true
 
-                        latestFullFrame?.let { bmp ->
-                            try { nativeSetLockTemplate(bmp, normX, normY) } catch (_: Throwable) {}
+                        if (isNativeLoaded) {
+                            latestFullFrame?.let { bmp ->
+                                try { nativeSetLockTemplate(bmp, normX, normY) } catch (_: Throwable) {}
+                            }
                         }
 
                         btnDismissLock.visibility = View.VISIBLE
-                        updateGpuSamplingTransform()
-                        Toast.makeText(this@MainActivity, "Locked! Tracking active.", Toast.LENGTH_SHORT).show()
+                        updateViewportZoom()
+                        Toast.makeText(this@MainActivity, "Target Locked! Stabilizing...", Toast.LENGTH_SHORT).show()
                     }
                 })
 
@@ -796,9 +785,11 @@ jobs:
                 normLockY = 0.5f
                 gyroCompX = 0f
                 gyroCompY = 0f
-                try { nativeClearLock() } catch (_: Throwable) {}
+                if (isNativeLoaded) {
+                    try { nativeClearLock() } catch (_: Throwable) {}
+                }
                 btnDismissLock.visibility = View.GONE
-                updateGpuSamplingTransform()
+                updateViewportZoom()
             }
 
             private fun adjustViewportDimensions() {
@@ -823,7 +814,7 @@ jobs:
                         }
                     }
                     cameraViewportFrame.layoutParams = params
-                    updateGpuSamplingTransform()
+                    updateViewportZoom()
                 }
             }
 
@@ -838,14 +829,14 @@ jobs:
 
                 pipContainer.visibility = if (totalZoom >= 15.0f) View.VISIBLE else View.GONE
                 if (isMoonMode) applyMoonExposureSettings()
-                updateGpuSamplingTransform()
+                updateViewportZoom()
             }
 
             private fun applyMoonExposureSettings() {
                 val state = camera?.cameraInfo?.exposureState ?: return
                 if (!state.isExposureCompensationSupported) return
                 if (isMoonMode) {
-                    // Under-expose by -4.0 EV so the bright Moon disc reveals crater texture
+                    // Under-expose by -4.0 EV to capture true lunar craters instead of a blown-out white glare
                     val minExp = state.exposureCompensationRange.lower
                     val targetExp = (minExp * 0.85f).toInt()
                     camera?.cameraControl?.setExposureCompensationIndex(targetExp)
@@ -854,18 +845,18 @@ jobs:
                 }
             }
 
-            // GPU Sampling Matrix: Never alters View bounds, runs at 60 FPS without GPU buffer crashes
-            private fun updateGpuSamplingTransform() {
-                val viewW = liveTextureView.width.toFloat()
-                val viewH = liveTextureView.height.toFloat()
+            private fun updateViewportZoom() {
+                val viewW = previewView.width.toFloat()
+                val viewH = previewView.height.toFloat()
                 if (viewW <= 0 || viewH <= 0) return
 
                 val activeX = (normLockX + gyroCompX).coerceIn(0.08f, 0.92f)
                 val activeY = (normLockY + gyroCompY).coerceIn(0.08f, 0.92f)
 
-                val matrix = Matrix()
-                matrix.postScale(softwareZoom, softwareZoom, activeX * viewW, activeY * viewH)
-                liveTextureView.setTransform(matrix)
+                previewView.pivotX = activeX * viewW
+                previewView.pivotY = activeY * viewH
+                previewView.scaleX = softwareZoom
+                previewView.scaleY = softwareZoom
 
                 overlayView.updateOverlay(isTargetLocked, activeX, activeY, isMoonMode, totalZoom >= 15f)
                 updatePipIndicator(activeX, activeY)
@@ -899,14 +890,8 @@ jobs:
                         .setCaptureRequestOption(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
                         .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
 
-                    val preview = previewBuilder.build()
-                    preview.setSurfaceProvider { request ->
-                        val surfaceTexture = liveTextureView.surfaceTexture
-                        if (surfaceTexture != null) {
-                            surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
-                            val surface = Surface(surfaceTexture)
-                            request.provideSurface(surface, ContextCompat.getMainExecutor(this)) { surface.release() }
-                        }
+                    val preview = previewBuilder.build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
                     val analysis = ImageAnalysis.Builder()
@@ -940,18 +925,20 @@ jobs:
 
                     latestFullFrame = corrected
 
-                    if (isTargetLocked) {
+                    if (isTargetLocked && isNativeLoaded) {
                         try {
                             val coords = nativeTrackTemplate(corrected)
                             if (coords != null && coords.size == 2) {
                                 normLockX = coords[0]
                                 normLockY = coords[1]
-                                runOnUiThread { updateGpuSamplingTransform() }
+                                runOnUiThread { updateViewportZoom() }
                             }
                         } catch (_: Throwable) {}
                     }
 
-                    try { nativePushFrameToRing(corrected) } catch (_: Throwable) {}
+                    if (isNativeLoaded) {
+                        try { nativePushFrameToRing(corrected) } catch (_: Throwable) {}
+                    }
 
                     if (++pipThrottle % 4 == 0 && totalZoom >= 15.0f) {
                         val thumb = Bitmap.createScaledBitmap(corrected, 160, 213, false)
@@ -972,7 +959,7 @@ jobs:
                     gyroCompY = (gyroCompY + event.values[0] * dt * damp).coerceIn(-0.12f, 0.12f)
                     gyroCompX *= 0.95f
                     gyroCompY *= 0.95f
-                    runOnUiThread { updateGpuSamplingTransform() }
+                    runOnUiThread { updateViewportZoom() }
                 }
                 lastGyroTime = event.timestamp
             }
@@ -995,7 +982,7 @@ jobs:
                     AspectRatioMode.RATIO_1_1 -> cropW
                     AspectRatioMode.RATIO_16_9 -> (cropW * 16) / 9
                     AspectRatioMode.RATIO_4_3 -> (cropW * 4) / 3
-                    AspectRatioMode.RATIO_FULL -> (cropW * liveTextureView.height) / liveTextureView.width.coerceAtLeast(1)
+                    AspectRatioMode.RATIO_FULL -> (cropW * previewView.height) / previewView.width.coerceAtLeast(1)
                 }.coerceIn(32, anchor.height)
 
                 val left = ((activeX * anchor.width) - cropW / 2).toInt().coerceIn(0, anchor.width - cropW)
@@ -1007,10 +994,18 @@ jobs:
 
                 lifecycleScope.launch(Dispatchers.Default) {
                     var framesFused = 1
-                    try {
-                        framesFused = nativeProcessRemaster(anchor, left, top, cropW, cropH, outBitmap, isMoonMode)
-                    } catch (e: Throwable) {
-                        e.printStackTrace()
+                    if (isNativeLoaded) {
+                        try {
+                            framesFused = nativeProcessRemaster(anchor, left, top, cropW, cropH, outBitmap, isMoonMode)
+                        } catch (e: Throwable) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        // Fallback crop if native engine unavailable
+                        val cropped = Bitmap.createBitmap(anchor, left, top, cropW, cropH)
+                        val scaled = Bitmap.createScaledBitmap(cropped, outW, outH, true)
+                        val canvas = android.graphics.Canvas(outBitmap)
+                        canvas.drawBitmap(scaled, 0f, 0f, null)
                     }
 
                     var detectedText = ""
@@ -1028,7 +1023,7 @@ jobs:
                                     flat[i * 4 + 2] = r.width()
                                     flat[i * 4 + 3] = r.height()
                                 }
-                                if (flat.isNotEmpty()) {
+                                if (flat.isNotEmpty() && isNativeLoaded) {
                                     nativeEnhanceTextEdges(outBitmap, flat)
                                 }
                             }
@@ -1063,6 +1058,13 @@ jobs:
                 }
             }
 
+            override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+                super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    startCamera()
+                }
+            }
+
             external fun nativeInitModels(mgr: AssetManager)
             external fun nativeSetLockTemplate(bmp: Bitmap, nx: Float, ny: Float)
             external fun nativeTrackTemplate(bmp: Bitmap): FloatArray?
@@ -1072,9 +1074,18 @@ jobs:
             external fun nativeEnhanceTextEdges(bmp: Bitmap, boxes: IntArray)
 
             companion object {
+                var isNativeLoaded = false
                 init {
-                    try { System.loadLibrary("opencv_java4") } catch (_: Throwable) {}
-                    try { System.loadLibrary("zoomcamera") } catch (_: Throwable) {}
+                    try {
+                        System.loadLibrary("c++_shared")
+                        System.loadLibrary("omp")
+                        System.loadLibrary("opencv_java4")
+                        System.loadLibrary("zoomcamera")
+                        isNativeLoaded = true
+                    } catch (t: Throwable) {
+                        t.printStackTrace()
+                        isNativeLoaded = false
+                    }
                 }
             }
         }
@@ -1341,17 +1352,15 @@ jobs:
 
             cv::Mat resultImg;
             if (moonMode) {
-                // Samsung-Style Moon Crater Detail Restoration
+                // Astronomical Lunar Contrast & Crater Enhancement
                 cv::Mat lab;
                 cv::cvtColor(merged8U, lab, cv::COLOR_BGR2Lab);
                 std::vector<cv::Mat> labCh;
                 cv::split(lab, labCh);
 
-                // High-contrast crater enhancement on L-channel
                 cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.5, cv::Size(8, 8));
                 clahe->apply(labCh[0], labCh[0]);
 
-                // Crater rim & Maria deconvolution
                 cv::Mat blurM, sharpM;
                 cv::GaussianBlur(labCh[0], blurM, cv::Size(0, 0), 1.6);
                 cv::addWeighted(labCh[0], 2.2, blurM, -1.2, 0, sharpM);
@@ -1433,5 +1442,5 @@ jobs:
     - name: Upload 200x Pro Moon Camera APK
       uses: actions/upload-artifact@v4
       with:
-        name: 200x-Pro-Moon-AI-Camera-APK
+        name: 200x-Ultra-Camera-ProMoon-APK
         path: app/build/outputs/apk/debug/app-debug.apk
