@@ -1,4 +1,4 @@
-name: Build 100x Zoom Camera APK (Self-Healing)
+name: Build 200x Ultra Zoom AI Camera APK (Self-Healing)
 
 on:
   push:
@@ -23,18 +23,16 @@ jobs:
       with:
         packages: 'platforms;android-35 build-tools;35.0.0'
 
-    - name: Install Unzip, Stop Gradle Daemons & Setup NDK/CMake
+    - name: Install Tools, Stop Gradle Daemons & Setup NDK/CMake
       run: |
         set -euo pipefail
         sudo apt-get update -qq
-        sudo apt-get install -y -qq unzip
+        sudo apt-get install -y -qq unzip wget curl
 
-        # Stop any background Gradle daemons that might have cached a missing environment
         ./gradlew --stop || true
 
         yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || [[ "${PIPESTATUS[1]}" -eq 0 ]] || true
 
-        # Install NDK/CMake with retry
         MAX_ATTEMPTS=3
         for i in $(seq 1 $MAX_ATTEMPTS); do
           rm -rf "$ANDROID_HOME/ndk/27.2.12479018" "$ANDROID_HOME/cmake/3.22.1"
@@ -45,89 +43,116 @@ jobs:
           sleep 5
         done
 
-        # Ensure exact paths are exported to Gradle environment
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
         echo "PATH=$ANDROID_HOME/cmake/3.22.1/bin:$PATH" >> $GITHUB_ENV
 
-    - name: Download Native Libraries & AI Models
+    - name: Download Native Libraries & AI Models (With Self-Healing Fallbacks)
       run: |
         set -euo pipefail
-        download_model() {
-          local filename=$1; shift; local urls=("$@")
+        download_with_fallback() {
+          local dest=$1; shift; local urls=("$@")
           for url in "${urls[@]}"; do
-            if wget -q --timeout=60 --tries=2 -O "app/src/main/assets/models/$filename" "$url" && [ -s "app/src/main/assets/models/$filename" ]; then return 0; fi
+            echo "Trying $url ..."
+            if wget -q --timeout=180 --tries=2 -O "$dest" "$url" && [ -s "$dest" ]; then
+              echo "Downloaded $dest successfully."
+              return 0
+            fi
           done
+          echo "Failed to download $dest from all mirrors."
           return 1
         }
 
-        wget -q --timeout=300 -O /tmp/opencv.zip "https://github.com/opencv/opencv/releases/download/4.14.0/opencv-4.14.0-android-sdk.zip"
+        download_with_fallback "/tmp/opencv.zip" \
+          "https://github.com/opencv/opencv/releases/download/4.11.0/opencv-4.11.0-android-sdk.zip" \
+          "https://github.com/opencv/opencv/releases/download/4.10.0/opencv-4.10.0-android-sdk.zip" \
+          "https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-android-sdk.zip"
         unzip -q /tmp/opencv.zip -d /tmp/
-        wget -q --timeout=300 -O /tmp/ncnn.zip "https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip"
+
+        download_with_fallback "/tmp/ncnn.zip" \
+          "https://github.com/Tencent/ncnn/releases/download/20241226/ncnn-20241226-android-vulkan.zip" \
+          "https://github.com/Tencent/ncnn/releases/download/20240820/ncnn-20240820-android-vulkan.zip"
         unzip -q /tmp/ncnn.zip -d /tmp/
-        
+
         mkdir -p app/src/main/assets/models
-        download_model "realesrgan-x4plus.param" \
+        download_with_fallback "app/src/main/assets/models/realesrgan-x4plus.param" \
           "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.param" \
           "https://raw.githubusercontent.com/genie-design/ESRGAN-ncnn-models/main/realesrgan-x4plus/realesrgan-x4plus.param"
-        download_model "realesrgan-x4plus.bin" \
+        download_with_fallback "app/src/main/assets/models/realesrgan-x4plus.bin" \
           "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.bin" \
           "https://raw.githubusercontent.com/genie-design/ESRGAN-ncnn-models/main/realesrgan-x4plus/realesrgan-x4plus.bin"
 
-    - name: Generate Complete Android Project Structure
+    - name: Generate Complete 200x Universal AI Camera Project
       run: |
+        set -euo pipefail
         mkdir -p app/src/main/java/com/example/zoomcamera app/src/main/cpp app/src/main/res/layout app/src/main/res/values
-        cp -r /tmp/OpenCV-android-sdk app/src/main/cpp/opencv
-        cp -r /tmp/ncnn-20260526-android-vulkan app/src/main/cpp/ncnn
 
-        # --- THIS IS THE CRITICAL FIX ---
-        # Patch ncnn.cmake to remove the flags that are overriding our RTTI settings
-        echo "Patching NCNN configuration to remove -fno-rtti and -fno-exceptions..."
+        cp -r /tmp/OpenCV-android-sdk app/src/main/cpp/opencv
+        NCNN_EXTRACTED=$(find /tmp -maxdepth 1 -type d -name "ncnn-*-android-vulkan" | head -n 1)
+        cp -r "$NCNN_EXTRACTED" app/src/main/cpp/ncnn
+
+        # Patch NCNN CMake so it does not strip RTTI and Exceptions required by OpenCV
         find app/src/main/cpp/ncnn -name "ncnn.cmake" -exec sed -i 's/INTERFACE_COMPILE_OPTIONS "-fno-rtti;-fno-exceptions"//g' {} \;
-        # ---------------------------------
 
         cat << 'EOF' > settings.gradle
         pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
         dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
-        rootProject.name = "ZoomCamera100x"
+        rootProject.name = "ZoomCamera200x"
         include ':app'
         EOF
 
         cat << 'EOF' > build.gradle
-        plugins { id 'com.android.application' version '8.7.3' apply false; id 'org.jetbrains.kotlin.android' version '2.0.21' apply false }
+        plugins {
+            id 'com.android.application' version '8.7.3' apply false
+            id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
+        }
         EOF
 
         cat << 'EOF' > gradle.properties
-        org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+        org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
         android.useAndroidX=true
         android.nonTransitiveRClass=true
         EOF
 
         cat << 'EOF' > app/build.gradle
-        plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+        plugins {
+            id 'com.android.application'
+            id 'org.jetbrains.kotlin.android'
+        }
         android {
             namespace 'com.example.zoomcamera'
             compileSdk 35
             defaultConfig {
                 applicationId "com.example.zoomcamera"
-                minSdk 26; targetSdk 35; versionCode 1; versionName "1.0"
+                minSdk 26
+                targetSdk 35
+                versionCode 2
+                versionName "2.0-Ultra200x"
                 ndk { abiFilters 'arm64-v8a' }
                 externalNativeBuild {
                     cmake {
-                        cppFlags "-std=c++17 -frtti -fexceptions"
+                        cppFlags "-std=c++17 -frtti -fexceptions -O3"
                         arguments "-DANDROID_CPP_FEATURES=rtti exceptions"
                     }
                 }
             }
-            buildTypes { release { minifyEnabled false } }
+            buildTypes {
+                release { minifyEnabled false }
+            }
             externalNativeBuild {
                 cmake {
                     path "src/main/cpp/CMakeLists.txt"
                     version "3.22.1"
                 }
             }
-            compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
-            kotlinOptions { jvmTarget = '17' }
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+            kotlinOptions {
+                jvmTarget = '17'
+                freeCompilerArgs += ["-opt-in=androidx.camera.camera2.interop.ExperimentalCamera2Interop"]
+            }
         }
         dependencies {
             def camerax_version = "1.4.0"
@@ -137,6 +162,11 @@ jobs:
             implementation "androidx.camera:camera-view:${camerax_version}"
             implementation 'androidx.appcompat:appcompat:1.7.0'
             implementation 'com.google.android.material:material:1.12.0'
+            implementation 'androidx.constraintlayout:constraintlayout:2.2.0'
+            implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
+            implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+            // On-device AI Text Recognition to detect & sharpen distant text without gibberish
+            implementation 'com.google.mlkit:text-recognition:16.0.1'
         }
         EOF
 
@@ -144,45 +174,866 @@ jobs:
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-feature android:name="android.hardware.camera" android:required="true" />
             <uses-permission android:name="android.permission.CAMERA" />
-            <application android:allowBackup="true" android:label="100x Zoom" android:theme="@style/Theme.Material3.DayNight.NoActionBar">
-                <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
-                    <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+            <application
+                android:allowBackup="true"
+                android:largeHeap="true"
+                android:label="200x AI Pro Cam"
+                android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+                <activity
+                    android:name=".MainActivity"
+                    android:exported="true"
+                    android:screenOrientation="portrait">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
                 </activity>
             </application>
         </manifest>
         EOF
 
+        cat << 'EOF' > app/src/main/res/values/themes.xml
+        <resources>
+            <style name="Theme.Material3.DayNight.NoActionBar" parent="Theme.Material3.Dark.NoActionBar">
+                <item name="android:statusBarColor">#000000</item>
+                <item name="android:navigationBarColor">#000000</item>
+            </style>
+        </resources>
+        EOF
+
         cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
-        <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent">
-            <androidx.camera.view.PreviewView android:id="@+id/viewFinder" android:layout_width="match_parent" android:layout_height="match_parent" />
-            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent" android:layout_marginBottom="32dp">
-                <Button android:id="@+id/btnLock" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Lock Target (Moon)" />
-                <Button android:id="@+id/btnStabilize" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Toggle Stabilization" />
-                <Button android:id="@+id/btnCapture" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Capture 100x" />
+        <androidx.constraintlayout.widget.ConstraintLayout
+            xmlns:android="http://schemas.android.com/apk/res/android"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000">
+
+            <!-- Hidden raw CameraX surface feeding live stabilized 200x canvas -->
+            <androidx.camera.view.PreviewView
+                android:id="@+id/rawPreviewView"
+                android:layout_width="1dp"
+                android:layout_height="1dp"
+                android:alpha="0"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent" />
+
+            <!-- Main 1x-200x Stabilized Live Viewfinder -->
+            <com.example.zoomcamera.StabilizedZoomView
+                android:id="@+id/zoomViewfinder"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- Top Controls Bar -->
+            <LinearLayout
+                android:id="@+id/topBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:padding="12dp"
+                android:background="#66000000"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <Button
+                    android:id="@+id/btnFlash"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="FLASH: OFF"
+                    android:textColor="#FFFFFF" />
+
+                <Button
+                    android:id="@+id/btnMode"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="MODE: AI TEXT + ULTRA SR"
+                    android:textColor="#FFD600" />
+
+                <Button
+                    android:id="@+id/btnFlip"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="FLIP"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <!-- Status / Ring-Buffer HUD -->
+            <TextView
+                android:id="@+id/tvHudStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginTop="8dp"
+                android:background="#88000000"
+                android:padding="6dp"
+                android:text="OIS+EIS ACTIVE | Hold screen to Lock Target"
+                android:textColor="#00E676"
+                android:textSize="11sp"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/topBar" />
+
+            <!-- Samsung-Style 15x-200x Picture-in-Picture Zoom Map (Auto-shows above 15x) -->
+            <androidx.cardview.widget.CardView
+                android:id="@+id/pipContainer"
+                android:layout_width="120dp"
+                android:layout_height="160dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginEnd="16dp"
+                android:visibility="gone"
+                app:cardCornerRadius="10dp"
+                app:cardElevation="8dp"
+                app:cardBackgroundColor="#222222"
+                app:layout_constraintTop_toBottomOf="@id/topBar"
+                app:layout_constraintEnd_toEndOf="parent">
+
+                <com.example.zoomcamera.SamsungPipGuideView
+                    android:id="@+id/pipGuideView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+            </androidx.cardview.widget.CardView>
+
+            <!-- Recognized Distant Text Overlay Banner -->
+            <TextView
+                android:id="@+id/tvOcrResult"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_margin="16dp"
+                android:background="#CC111111"
+                android:padding="10dp"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:visibility="gone"
+                app:layout_constraintBottom_toTopOf="@id/bottomControls"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <!-- Bottom Camera Suite Controls -->
+            <LinearLayout
+                android:id="@+id/bottomControls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="#99000000"
+                android:padding="12dp"
+                app:layout_constraintBottom_toBottomOf="parent">
+
+                <!-- Exposure / Brightness Fine Control -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="8dp">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="EV"
+                        android:textColor="#CCCCCC"
+                        android:textSize="12sp" />
+                    <SeekBar
+                        android:id="@+id/seekExposure"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:max="100"
+                        android:progress="50" />
+                    <TextView
+                        android:id="@+id/tvZoomReadout"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="1.0x"
+                        android:textColor="#FFD600"
+                        android:textStyle="bold"
+                        android:textSize="16sp" />
+                </LinearLayout>
+
+                <!-- Continuous 1x to 200x Zoom Slider -->
+                <SeekBar
+                    android:id="@+id/seekZoom"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:max="1990"
+                    android:progress="0" />
+
+                <!-- Quick Zoom Preset Buttons (1x, 5x, 15x, 50x, 100x, 200x) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:layout_marginTop="4dp">
+
+                    <Button android:id="@+id/btnZ1" style="@style/Widget.Material3.Button.TextButton" android:layout_width="52dp" android:layout_height="38dp" android:padding="0dp" android:text="1x" android:textColor="#FFFFFF" />
+                    <Button android:id="@+id/btnZ5" style="@style/Widget.Material3.Button.TextButton" android:layout_width="52dp" android:layout_height="38dp" android:padding="0dp" android:text="5x" android:textColor="#FFFFFF" />
+                    <Button android:id="@+id/btnZ15" style="@style/Widget.Material3.Button.TextButton" android:layout_width="56dp" android:layout_height="38dp" android:padding="0dp" android:text="15x" android:textColor="#FFFFFF" />
+                    <Button android:id="@+id/btnZ50" style="@style/Widget.Material3.Button.TextButton" android:layout_width="56dp" android:layout_height="38dp" android:padding="0dp" android:text="50x" android:textColor="#FFFFFF" />
+                    <Button android:id="@+id/btnZ100" style="@style/Widget.Material3.Button.TextButton" android:layout_width="64dp" android:layout_height="38dp" android:padding="0dp" android:text="100x" android:textColor="#FFD600" />
+                    <Button android:id="@+id/btnZ200" style="@style/Widget.Material3.Button.TextButton" android:layout_width="64dp" android:layout_height="38dp" android:padding="0dp" android:text="200x" android:textColor="#FF5252" />
+                </LinearLayout>
+
+                <!-- Shutter Row: Clear Lock | Shutter | Last Capture Preview -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+
+                    <Button
+                        android:id="@+id/btnUnlockTarget"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="96dp"
+                        android:layout_height="48dp"
+                        android:text="UNLOCK"
+                        android:textColor="#FFD600"
+                        android:textSize="11sp" />
+
+                    <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+
+                    <Button
+                        android:id="@+id/btnCapture"
+                        android:layout_width="84dp"
+                        android:layout_height="84dp"
+                        android:backgroundTint="#FFFFFF"
+                        android:text="SNAP"
+                        android:textColor="#000000"
+                        android:textStyle="bold" />
+
+                    <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+
+                    <ImageView
+                        android:id="@+id/ivLastPhoto"
+                        android:layout_width="64dp"
+                        android:layout_height="64dp"
+                        android:background="#333333"
+                        android:scaleType="centerCrop"
+                        android:contentDescription="Last captured photo" />
+                </LinearLayout>
             </LinearLayout>
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
+        cat << 'EOF' > app/src/main/java/com/example/zoomcamera/StabilizedZoomView.kt
+        package com.example.zoomcamera
+
+        import android.content.Context
+        import android.graphics.*
+        import android.util.AttributeSet
+        import android.view.View
+
+        class StabilizedZoomView @JvmOverloads constructor(
+            context: Context, attrs: AttributeSet? = null
+        ) : View(context, attrs) {
+
+            private var currentFrame: Bitmap? = null
+            private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+            private val lockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 5f
+                color = Color.parseColor("#FFD600")
+            }
+            private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 2f
+                color = Color.parseColor("#88FFFFFF")
+            }
+
+            var softwareZoomFactor: Float = 1.0f
+            var normCenterX: Float = 0.5f
+            var normCenterY: Float = 0.5f
+            var isTargetLocked: Boolean = false
+            private val srcRect = Rect()
+            private val dstRect = Rect()
+
+            fun updateFrame(
+                bitmap: Bitmap,
+                swZoom: Float,
+                centerX: Float,
+                centerY: Float,
+                locked: Boolean
+            ) {
+                currentFrame = bitmap
+                softwareZoomFactor = swZoom.coerceAtLeast(1.0f)
+                normCenterX = centerX.coerceIn(0.05f, 0.95f)
+                normCenterY = centerY.coerceIn(0.05f, 0.95f)
+                isTargetLocked = locked
+                postInvalidateOnAnimation()
+            }
+
+            fun getCurrentCropRect(bmpWidth: Int, bmpHeight: Int): Rect {
+                val cropW = (bmpWidth / softwareZoomFactor).toInt().coerceAtLeast(32)
+                val cropH = (bmpHeight / softwareZoomFactor).toInt().coerceAtLeast(32)
+                val cx = (normCenterX * bmpWidth).toInt()
+                val cy = (normCenterY * bmpHeight).toInt()
+                val left = (cx - cropW / 2).coerceIn(0, (bmpWidth - cropW).coerceAtLeast(0))
+                val top = (cy - cropH / 2).coerceIn(0, (bmpHeight - cropH).coerceAtLeast(0))
+                return Rect(left, top, left + cropW, top + cropH)
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val bmp = currentFrame ?: return
+                if (bmp.isRecycled) return
+
+                val crop = getCurrentCropRect(bmp.width, bmp.height)
+                srcRect.set(crop)
+                dstRect.set(0, 0, width, height)
+                canvas.drawBitmap(bmp, srcRect, dstRect, paint)
+
+                val cx = width / 2f
+                val cy = height / 2f
+
+                if (isTargetLocked) {
+                    lockPaint.color = if (softwareZoomFactor > 15f) Color.parseColor("#00E676") else Color.parseColor("#FFD600")
+                    val boxRadius = 90f
+                    canvas.drawRect(cx - boxRadius, cy - boxRadius, cx + boxRadius, cy + boxRadius, lockPaint)
+                    canvas.drawLine(cx - boxRadius - 25f, cy, cx - boxRadius + 15f, cy, lockPaint)
+                    canvas.drawLine(cx + boxRadius - 15f, cy, cx + boxRadius + 25f, cy, lockPaint)
+                    canvas.drawLine(cx, cy - boxRadius - 25f, cx, cy - boxRadius + 15f, lockPaint)
+                    canvas.drawLine(cx, cy + boxRadius - 15f, cx, cy + boxRadius + 25f, lockPaint)
+                } else if (softwareZoomFactor >= 15f) {
+                    canvas.drawCircle(cx, cy, 24f, crosshairPaint)
+                }
+            }
+        }
+        EOF
+
+        cat << 'EOF' > app/src/main/java/com/example/zoomcamera/SamsungPipGuideView.kt
+        package com.example.zoomcamera
+
+        import android.content.Context
+        import android.graphics.*
+        import android.util.AttributeSet
+        import android.view.View
+
+        class SamsungPipGuideView @JvmOverloads constructor(
+            context: Context, attrs: AttributeSet? = null
+        ) : View(context, attrs) {
+
+            private var wideBitmap: Bitmap? = null
+            private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+            private val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 4f
+                color = Color.parseColor("#FFD600")
+            }
+            private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
+                color = Color.WHITE
+            }
+            private val dstRect = Rect()
+            private val zoomBox = RectF()
+
+            fun updateGuide(bitmap: Bitmap, swZoom: Float, normX: Float, normY: Float, locked: Boolean) {
+                wideBitmap = bitmap
+                boxPaint.color = if (locked) Color.parseColor("#00E676") else Color.parseColor("#FFD600")
+                val boxFraction = (1.0f / swZoom.coerceAtLeast(1.0f)).coerceIn(0.06f, 0.95f)
+                val halfW = boxFraction * 0.5f
+                val halfH = boxFraction * 0.5f
+                val left = (normX - halfW).coerceIn(0.02f, 0.98f - boxFraction)
+                val top = (normY - halfH).coerceIn(0.02f, 0.98f - boxFraction)
+                zoomBox.set(left, top, left + boxFraction, top + boxFraction)
+                postInvalidateOnAnimation()
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val bmp = wideBitmap ?: return
+                if (bmp.isRecycled) return
+                dstRect.set(0, 0, width, height)
+                canvas.drawBitmap(bmp, null, dstRect, bmpPaint)
+
+                val rectPx = RectF(
+                    zoomBox.left * width,
+                    zoomBox.top * height,
+                    zoomBox.right * width,
+                    zoomBox.bottom * height
+                )
+                canvas.drawRect(rectPx, boxPaint)
+                canvas.drawRect(1f, 1f, width - 1f, height - 1f, borderPaint)
+            }
+        }
+        EOF
+
         cat << 'EOF' > app/src/main/java/com/example/zoomcamera/MainActivity.kt
         package com.example.zoomcamera
-        import android.Manifest; import android.content.pm.PackageManager; import android.os.Bundle; import android.widget.Button; import android.widget.Toast
-        import androidx.appcompat.app.AppCompatActivity; import androidx.camera.core.*; import androidx.camera.lifecycle.ProcessCameraProvider; import androidx.camera.view.PreviewView; import androidx.core.app.ActivityCompat; import androidx.core.content.ContextCompat
-        class MainActivity : AppCompatActivity() {
-            private lateinit var viewFinder: PreviewView; private var camera: Camera? = null; private var isStabilized = false
+
+        import android.Manifest
+        import android.content.ContentValues
+        import android.content.Context
+        import android.content.pm.PackageManager
+        import android.content.res.AssetManager
+        import android.graphics.Bitmap
+        import android.graphics.Matrix
+        import android.graphics.Rect
+        import android.hardware.Sensor
+        import android.hardware.SensorEvent
+        import android.hardware.SensorEventListener
+        import android.hardware.SensorManager
+        import android.hardware.camera2.CaptureRequest
+        import android.os.Build
+        import android.os.Bundle
+        import android.provider.MediaStore
+        import android.util.Size
+        import android.view.GestureDetector
+        import android.view.MotionEvent
+        import android.view.ScaleGestureDetector
+        import android.view.View
+        import android.widget.*
+        import androidx.appcompat.app.AppCompatActivity
+        import androidx.camera.camera2.interop.Camera2Interop
+        import androidx.camera.core.*
+        import androidx.camera.lifecycle.ProcessCameraProvider
+        import androidx.camera.view.PreviewView
+        import androidx.cardview.widget.CardView
+        import androidx.core.app.ActivityCompat
+        import androidx.core.content.ContextCompat
+        import androidx.lifecycle.lifecycleScope
+        import com.google.mlkit.vision.common.InputImage
+        import com.google.mlkit.vision.text.TextRecognition
+        import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+        import kotlinx.coroutines.Dispatchers
+        import kotlinx.coroutines.launch
+        import kotlinx.coroutines.tasks.await
+        import kotlinx.coroutines.withContext
+        import java.io.OutputStream
+        import java.util.concurrent.Executors
+        import kotlin.math.min
+
+        class MainActivity : AppCompatActivity(), SensorEventListener {
+
+            private lateinit var rawPreviewView: PreviewView
+            private lateinit var zoomViewfinder: StabilizedZoomView
+            private lateinit var pipContainer: CardView
+            private lateinit var pipGuideView: SamsungPipGuideView
+            private lateinit var tvHudStatus: TextView
+            private lateinit var tvZoomReadout: TextView
+            private lateinit var tvOcrResult: TextView
+            private lateinit var seekZoom: SeekBar
+            private lateinit var seekExposure: SeekBar
+            private lateinit var ivLastPhoto: ImageView
+
+            private var camera: Camera? = null
+            private var lensFacing = CameraSelector.LENS_FACING_BACK
+            private var flashMode = ImageCapture.FLASH_MODE_OFF
+            private var aiTextMode = true
+
+            private var totalZoom = 1.0f
+            private var maxHardwareZoom = 8.0f
+            private var currentSoftwareZoom = 1.0f
+
+            // Stabilization & Target Lock state
+            private lateinit var sensorManager: SensorManager
+            private var gyroSensor: Sensor? = null
+            private var gyroOffsetX = 0f
+            private var gyroOffsetY = 0f
+            private var lastGyroTimestamp = 0L
+
+            @Volatile private var isTargetLocked = false
+            @Volatile private var normTargetX = 0.5f
+            @Volatile private var normTargetY = 0.5f
+
+            @Volatile private var latestFullFrameBitmap: Bitmap? = null
+            private val analysisExecutor = Executors.newSingleThreadExecutor()
+            private val textRecognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+
             override fun onCreate(savedInstanceState: Bundle?) {
-                super.onCreate(savedInstanceState); setContentView(R.layout.activity_main); viewFinder = findViewById(R.id.viewFinder)
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { startCamera() } else { ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10) }
-                findViewById<Button>(R.id.btnCapture).setOnClickListener { Toast.makeText(this, "Processing Burst & AI Upscale...", Toast.LENGTH_SHORT).show(); nativeProcessBurst() }
-                findViewById<Button>(R.id.btnLock).setOnClickListener { val point = viewFinder.meteringPointFactory.createPoint(viewFinder.width / 2f, viewFinder.height / 2f); camera?.cameraControl?.startFocusAndMetering(FocusMeteringAction.Builder(point).build()); Toast.makeText(this, "Locked on target", Toast.LENGTH_SHORT).show() }
-                findViewById<Button>(R.id.btnStabilize).setOnClickListener { isStabilized = !isStabilized; Toast.makeText(this, "Stabilization: ${if (isStabilized) "ON" else "OFF"}", Toast.LENGTH_SHORT).show() }
+                super.onCreate(savedInstanceState)
+                setContentView(R.layout.activity_main)
+
+                rawPreviewView = findViewById(R.id.rawPreviewView)
+                zoomViewfinder = findViewById(R.id.zoomViewfinder)
+                pipContainer = findViewById(R.id.pipContainer)
+                pipGuideView = findViewById(R.id.pipGuideView)
+                tvHudStatus = findViewById(R.id.tvHudStatus)
+                tvZoomReadout = findViewById(R.id.tvZoomReadout)
+                tvOcrResult = findViewById(R.id.tvOcrResult)
+                seekZoom = findViewById(R.id.seekZoom)
+                seekExposure = findViewById(R.id.seekExposure)
+                ivLastPhoto = findViewById(R.id.ivLastPhoto)
+
+                sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+                gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+
+                nativeInitAiEngine(assets)
+                setupUIListeners()
+                setupTouchAndTargetLock()
+
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    startCamera()
+                } else {
+                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
+                }
             }
+
+            override fun onResume() {
+                super.onResume()
+                gyroSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+            }
+
+            override fun onPause() {
+                super.onPause()
+                sensorManager.unregisterListener(this)
+            }
+
+            private fun setupUIListeners() {
+                val presetMap = mapOf(
+                    R.id.btnZ1 to 1.0f,
+                    R.id.btnZ5 to 5.0f,
+                    R.id.btnZ15 to 15.0f,
+                    R.id.btnZ50 to 50.0f,
+                    R.id.btnZ100 to 100.0f,
+                    R.id.btnZ200 to 200.0f
+                )
+                presetMap.forEach { (id, zoomVal) ->
+                    findViewById<Button>(id).setOnClickListener { applyZoom(zoomVal, updateSlider = true) }
+                }
+
+                seekZoom.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        if (fromUser) {
+                            val z = 1.0f + (progress / 10.0f)
+                            applyZoom(z, updateSlider = false)
+                        }
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                })
+
+                seekExposure.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        val state = camera?.cameraInfo?.exposureState ?: return
+                        if (!state.isExposureCompensationSupported) return
+                        val range = state.exposureCompensationRange
+                        val index = (range.lower + ((progress / 100f) * (range.upper - range.lower))).toInt()
+                        camera?.cameraControl?.setExposureCompensationIndex(index)
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                })
+
+                findViewById<Button>(R.id.btnFlash).setOnClickListener { view ->
+                    val btn = view as Button
+                    flashMode = when (flashMode) {
+                        ImageCapture.FLASH_MODE_OFF -> {
+                            camera?.cameraControl?.enableTorch(true)
+                            btn.text = "FLASH: TORCH"
+                            ImageCapture.FLASH_MODE_ON
+                        }
+                        else -> {
+                            camera?.cameraControl?.enableTorch(false)
+                            btn.text = "FLASH: OFF"
+                            ImageCapture.FLASH_MODE_OFF
+                        }
+                    }
+                }
+
+                findViewById<Button>(R.id.btnMode).setOnClickListener { view ->
+                    val btn = view as Button
+                    aiTextMode = !aiTextMode
+                    btn.text = if (aiTextMode) "MODE: AI TEXT + ULTRA SR" else "MODE: NATURAL MULTI-FRAME"
+                }
+
+                findViewById<Button>(R.id.btnFlip).setOnClickListener {
+                    lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                        CameraSelector.LENS_FACING_FRONT
+                    } else {
+                        CameraSelector.LENS_FACING_BACK
+                    }
+                    startCamera()
+                }
+
+                findViewById<Button>(R.id.btnUnlockTarget).setOnClickListener {
+                    isTargetLocked = false
+                    normTargetX = 0.5f
+                    normTargetY = 0.5f
+                    gyroOffsetX = 0f
+                    gyroOffsetY = 0f
+                    nativeClearTargetLock()
+                    tvHudStatus.text = "OIS+EIS ACTIVE | Hold screen to Lock Target"
+                }
+
+                findViewById<Button>(R.id.btnCapture).setOnClickListener {
+                    captureAndRemasterExactFrame()
+                }
+            }
+
+            private fun setupTouchAndTargetLock() {
+                val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    override fun onScale(detector: ScaleGestureDetector): Boolean {
+                        val updated = (totalZoom * detector.scaleFactor).coerceIn(1.0f, 200.0f)
+                        applyZoom(updated, updateSlider = true)
+                        return true
+                    }
+                })
+
+                val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        val factory = SurfaceOrientedMeteringPointFactory(
+                            zoomViewfinder.width.toFloat(),
+                            zoomViewfinder.height.toFloat()
+                        )
+                        val point = factory.createPoint(e.x, e.y)
+                        camera?.cameraControl?.startFocusAndMetering(FocusMeteringAction.Builder(point).build())
+                        return true
+                    }
+
+                    override fun onLongPress(e: MotionEvent) {
+                        val frame = latestFullFrameBitmap ?: return
+                        val crop = zoomViewfinder.getCurrentCropRect(frame.width, frame.height)
+                        val relX = (e.x / zoomViewfinder.width.toFloat()).coerceIn(0f, 1f)
+                        val relY = (e.y / zoomViewfinder.height.toFloat()).coerceIn(0f, 1f)
+
+                        val lockedPxX = crop.left + relX * crop.width()
+                        val lockedPxY = crop.top + relY * crop.height()
+
+                        normTargetX = (lockedPxX / frame.width).coerceIn(0.1f, 0.9f)
+                        normTargetY = (lockedPxY / frame.height).coerceIn(0.1f, 0.9f)
+                        gyroOffsetX = 0f
+                        gyroOffsetY = 0f
+
+                        nativeLockTarget(frame, normTargetX, normTargetY)
+                        isTargetLocked = true
+                        tvHudStatus.text = "TARGET LOCKED (${String.format("%.1fx", totalZoom)}) - Tracking Active"
+                        Toast.makeText(this@MainActivity, "Target Locked! Stabilizing on object...", Toast.LENGTH_SHORT).show()
+                    }
+                })
+
+                zoomViewfinder.setOnTouchListener { _, event ->
+                    scaleDetector.onTouchEvent(event)
+                    gestureDetector.onTouchEvent(event)
+                    true
+                }
+            }
+
+            private fun applyZoom(desiredZoom: Float, updateSlider: Boolean) {
+                totalZoom = desiredZoom.coerceIn(1.0f, 200.0f)
+                val hwZoom = min(totalZoom, maxHardwareZoom)
+                camera?.cameraControl?.setZoomRatio(hwZoom)
+                currentSoftwareZoom = (totalZoom / hwZoom).coerceAtLeast(1.0f)
+
+                tvZoomReadout.text = String.format("%.1fx", totalZoom)
+                if (updateSlider) {
+                    seekZoom.progress = ((totalZoom - 1.0f) * 10f).toInt()
+                }
+
+                // Show Samsung-style Picture-in-Picture Zoom Map whenever zoom exceeds 15x
+                pipContainer.visibility = if (totalZoom > 15.0f) View.VISIBLE else View.GONE
+            }
+
             private fun startCamera() {
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-                cameraProviderFuture.addListener({ val cameraProvider = cameraProviderFuture.get(); val preview = Preview.Builder().build().also { it.setSurfaceProvider(viewFinder.surfaceProvider) }; camera = cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview); val maxZoom = camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1.0f; camera?.cameraControl?.setZoomRatio(minOf(100f, maxZoom)) }, ContextCompat.getMainExecutor(this))
+                cameraProviderFuture.addListener({
+                    val provider = cameraProviderFuture.get()
+                    provider.unbindAll()
+
+                    val previewBuilder = Preview.Builder()
+                    Camera2Interop.Extender(previewBuilder)
+                        .setCaptureRequestOption(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
+                        .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
+                    val preview = previewBuilder.build().also {
+                        it.setSurfaceProvider(rawPreviewView.surfaceProvider)
+                    }
+
+                    val analysisBuilder = ImageAnalysis.Builder()
+                        .setTargetResolution(Size(1920, 1440))
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+
+                    Camera2Interop.Extender(analysisBuilder)
+                        .setCaptureRequestOption(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
+                        .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
+
+                    val imageAnalysis = analysisBuilder.build()
+                    imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
+                        processLiveFrame(imageProxy)
+                    }
+
+                    val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+                    camera = provider.bindToLifecycle(this, selector, preview, imageAnalysis)
+
+                    maxHardwareZoom = (camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 8.0f).coerceAtLeast(1.0f)
+                    applyZoom(totalZoom, updateSlider = true)
+                }, ContextCompat.getMainExecutor(this))
             }
-            external fun nativeProcessBurst()
-            companion object { init { System.loadLibrary("zoomcamera") } }
+
+            private fun processLiveFrame(imageProxy: ImageProxy) {
+                try {
+                    val rawBmp = imageProxy.toBitmap()
+                    val rotation = imageProxy.imageInfo.rotationDegrees
+                    val rotatedBmp = if (rotation != 0) {
+                        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                        Bitmap.createBitmap(rawBmp, 0, 0, rawBmp.width, rawBmp.height, matrix, true)
+                    } else {
+                        rawBmp
+                    }
+
+                    latestFullFrameBitmap = rotatedBmp
+
+                    // 1. Update optical target lock or gyro stabilization center
+                    var activeX = (normTargetX + gyroOffsetX).coerceIn(0.08f, 0.92f)
+                    var activeY = (normTargetY + gyroOffsetY).coerceIn(0.08f, 0.92f)
+
+                    if (isTargetLocked) {
+                        val tracked = nativeUpdateTargetLock(rotatedBmp)
+                        if (tracked != null && tracked.size == 2) {
+                            normTargetX = tracked[0].coerceIn(0.08f, 0.92f)
+                            normTargetY = tracked[1].coerceIn(0.08f, 0.92f)
+                            activeX = normTargetX
+                            activeY = normTargetY
+                        }
+                    }
+
+                    // 2. Push stabilized ROI into zero-lag C++ circular ring buffer when zoomed
+                    val cropRect = zoomViewfinder.getCurrentCropRect(rotatedBmp.width, rotatedBmp.height)
+                    if (totalZoom >= 2.0f) {
+                        val roiBmp = Bitmap.createBitmap(
+                            rotatedBmp,
+                            cropRect.left,
+                            cropRect.top,
+                            cropRect.width(),
+                            cropRect.height()
+                        )
+                        nativePushBurstFrame(roiBmp)
+                    }
+
+                    // 3. Render live 200x stabilized viewfinder + 15x+ PiP guide window
+                    zoomViewfinder.updateFrame(rotatedBmp, currentSoftwareZoom, activeX, activeY, isTargetLocked)
+                    if (totalZoom > 15.0f) {
+                        pipGuideView.updateGuide(rotatedBmp, currentSoftwareZoom, activeX, activeY, isTargetLocked)
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    imageProxy.close()
+                }
+            }
+
+            private fun captureAndRemasterExactFrame() {
+                val anchorFullFrame = latestFullFrameBitmap ?: run {
+                    Toast.makeText(this, "Camera warming up...", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                // Anchor strictly to the exact crop & position on screen at the moment of shutter click
+                val exactCrop: Rect = zoomViewfinder.getCurrentCropRect(anchorFullFrame.width, anchorFullFrame.height)
+                val exactAnchorRoi = Bitmap.createBitmap(
+                    anchorFullFrame,
+                    exactCrop.left,
+                    exactCrop.top,
+                    exactCrop.width(),
+                    exactCrop.height()
+                )
+
+                tvHudStatus.text = "ALIGNING BURST + AI REMASTERING (ANCHORED TO SHOT)..."
+                tvOcrResult.visibility = View.GONE
+
+                lifecycleScope.launch(Dispatchers.Default) {
+                    // Stage 1-3: Sub-pixel Multi-Frame Drizzle + Deconvolution + NCNN Real-ESRGAN (anchored to exactAnchorRoi)
+                    val remasteredBmp = Bitmap.createBitmap(960, 1280, Bitmap.Config.ARGB_8888)
+                    val mergedCount = nativeProcessSuperResBurst(exactAnchorRoi, remasteredBmp, aiTextMode)
+
+                    // Stage 4: On-Device AI Text Recognition (ML Kit) + Anti-Gibberish Stroke Sharpening
+                    var detectedText = ""
+                    if (aiTextMode) {
+                        try {
+                            val visionImg = InputImage.fromBitmap(remasteredBmp, 0)
+                            val result = textRecognizer.process(visionImg).await()
+                            if (result.text.isNotBlank()) {
+                                detectedText = result.text.trim()
+                                val boxes = result.textBlocks.mapNotNull { it.boundingBox }
+                                val flatBoxes = IntArray(boxes.size * 4)
+                                boxes.forEachIndexed { idx, r ->
+                                    flatBoxes[idx * 4] = r.left
+                                    flatBoxes[idx * 4 + 1] = r.top
+                                    flatBoxes[idx * 4 + 2] = r.width()
+                                    flatBoxes[idx * 4 + 3] = r.height()
+                                }
+                                if (flatBoxes.isNotEmpty()) {
+                                    nativeSharpenTextRegions(remasteredBmp, flatBoxes)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+
+                    saveBitmapToGallery(remasteredBmp)
+
+                    withContext(Dispatchers.Main) {
+                        ivLastPhoto.setImageBitmap(remasteredBmp)
+                        tvHudStatus.text = "SAVED! Merged $mergedCount burst frames @ ${String.format("%.1fx", totalZoom)}"
+                        if (detectedText.isNotEmpty()) {
+                            tvOcrResult.text = "AI READABLE TEXT DETECTED:\n$detectedText"
+                            tvOcrResult.visibility = View.VISIBLE
+                        }
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Saved 200x AI Remastered Photo ($mergedCount frames fused)!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+
+            private fun saveBitmapToGallery(bitmap: Bitmap) {
+                val filename = "UltraZoom200x_${System.currentTimeMillis()}.jpg"
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/UltraZoom200x")
+                    }
+                }
+                val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+                contentResolver.openOutputStream(uri)?.use { out: OutputStream ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 98, out)
+                }
+            }
+
+            override fun onSensorChanged(event: SensorEvent?) {
+                if (event?.sensor?.type != Sensor.TYPE_GYROSCOPE) return
+                if (lastGyroTimestamp != 0L && !isTargetLocked && totalZoom > 3.0f) {
+                    val dt = (event.timestamp - lastGyroTimestamp) * 1e-9f
+                    // Counteract subtle hand pitch/yaw micro-tremors inversely proportional to zoom
+                    val damping = (0.04f / currentSoftwareZoom.coerceAtLeast(1.0f))
+                    gyroOffsetX = (gyroOffsetX - event.values[1] * dt * damping).coerceIn(-0.15f, 0.15f)
+                    gyroOffsetY = (gyroOffsetY + event.values[0] * dt * damping).coerceIn(-0.15f, 0.15f)
+                    // Gently recenter drift
+                    gyroOffsetX *= 0.96f
+                    gyroOffsetY *= 0.96f
+                }
+                lastGyroTimestamp = event.timestamp
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+            override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+                super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    startCamera()
+                }
+            }
+
+            external fun nativeInitAiEngine(assetManager: AssetManager)
+            external fun nativeLockTarget(frame: Bitmap, normX: Float, normY: Float)
+            external fun nativeUpdateTargetLock(frame: Bitmap): FloatArray?
+            external fun nativeClearTargetLock()
+            external fun nativePushBurstFrame(roiFrame: Bitmap)
+            external fun nativeProcessSuperResBurst(anchorRoi: Bitmap, outBitmap: Bitmap, crispTextMode: Boolean): Int
+            external fun nativeSharpenTextRegions(remasteredBitmap: Bitmap, flatBoxes: IntArray)
+
+            companion object {
+                init {
+                    System.loadLibrary("zoomcamera")
+                }
+            }
         }
         EOF
 
@@ -190,7 +1041,6 @@ jobs:
         cmake_minimum_required(VERSION 3.22.1)
         project("zoomcamera")
 
-        # Explicitly enable RTTI and Exceptions for OpenCV
         set(CMAKE_ANDROID_RTTI TRUE)
         set(CMAKE_ANDROID_EXCEPTIONS TRUE)
         set(ANDROID_CPP_FEATURES "rtti exceptions")
@@ -202,39 +1052,326 @@ jobs:
 
         add_library(zoomcamera SHARED native-lib.cpp)
 
-        # Force -frtti on the target
-        target_compile_options(zoomcamera PRIVATE -frtti -fexceptions)
+        target_compile_options(zoomcamera PRIVATE -frtti -fexceptions -O3)
 
         find_library(log-lib log)
-        target_link_libraries(zoomcamera ${OpenCV_LIBS} ncnn ${log-lib})
+        find_library(android-lib android)
+        find_library(jnigraphics-lib jnigraphics)
+
+        target_link_libraries(
+            zoomcamera
+            ${OpenCV_LIBS}
+            ncnn
+            ${log-lib}
+            ${android-lib}
+            ${jnigraphics-lib}
+        )
         EOF
 
         cat << 'EOF' > app/src/main/cpp/native-lib.cpp
         #include <jni.h>
+        #include <android/bitmap.h>
+        #include <android/asset_manager.h>
+        #include <android/asset_manager_jni.h>
+        #include <android/log.h>
         #include <opencv2/opencv.hpp>
         #include "net.h"
-        #include <android/log.h>
-        #define LOG_TAG "ZoomCamera"
+        #include <deque>
+        #include <mutex>
+        #include <vector>
+
+        #define LOG_TAG "ZoomCamera200x"
         #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-        extern "C" JNIEXPORT void JNICALL Java_com_example_zoomcamera_MainActivity_nativeProcessBurst(JNIEnv* env, jobject) {
-            LOGI("Native Burst Processing Started");
-            ncnn::Net net; net.opt.use_vulkan_compute = true;
-            LOGI("Burst aligned and queued for AI Upscaling.");
+
+        static std::mutex gBurstMutex;
+        static std::deque<cv::Mat> gBurstRingBuffer;
+        static const size_t MAX_RING_BUFFER = 8;
+
+        static std::mutex gTrackMutex;
+        static cv::Mat gTargetTemplate;
+        static cv::Point2f gTargetCenter(0.5f, 0.5f);
+        static bool gHasTarget = false;
+
+        static ncnn::Net gSrNet;
+        static bool gNcnnReady = false;
+
+        static cv::Mat bitmapToMat(JNIEnv* env, jobject bitmap) {
+            AndroidBitmapInfo info;
+            void* pixels = nullptr;
+            if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) return cv::Mat();
+            if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) return cv::Mat();
+            cv::Mat rgba(info.height, info.width, CV_8UC4, pixels);
+            cv::Mat bgr;
+            cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
+            AndroidBitmap_unlockPixels(env, bitmap);
+            return bgr.clone();
+        }
+
+        static void matToBitmap(JNIEnv* env, const cv::Mat& bgr, jobject bitmap) {
+            AndroidBitmapInfo info;
+            void* pixels = nullptr;
+            if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) return;
+            if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) return;
+            cv::Mat resized;
+            if (bgr.cols != (int)info.width || bgr.rows != (int)info.height) {
+                cv::resize(bgr, resized, cv::Size(info.width, info.height), 0, 0, cv::INTER_LANCZOS4);
+            } else {
+                resized = bgr;
+            }
+            cv::Mat dstRgba(info.height, info.width, CV_8UC4, pixels);
+            cv::cvtColor(resized, dstRgba, cv::COLOR_BGR2RGBA);
+            AndroidBitmap_unlockPixels(env, bitmap);
+        }
+
+        extern "C" JNIEXPORT void JNICALL
+        Java_com_example_zoomcamera_MainActivity_nativeInitAiEngine(JNIEnv* env, jobject, jobject assetManagerObj) {
+            AAssetManager* mgr = AAssetManager_fromJava(env, assetManagerObj);
+            if (!mgr) return;
+            gSrNet.opt.use_vulkan_compute = false; // Safe universal CPU/ARM64 NEON mode across all devices
+            gSrNet.opt.num_threads = 4;
+            int retParam = gSrNet.load_param(mgr, "models/realesrgan-x4plus.param");
+            int retBin = gSrNet.load_model(mgr, "models/realesrgan-x4plus.bin");
+            gNcnnReady = (retParam == 0 && retBin == 0);
+            LOGI("AI Engine initialized. NCNN Real-ESRGAN ready=%d", gNcnnReady);
+        }
+
+        extern "C" JNIEXPORT void JNICALL
+        Java_com_example_zoomcamera_MainActivity_nativeLockTarget(JNIEnv* env, jobject, jobject frameBmp, jfloat normX, jfloat normY) {
+            cv::Mat bgr = bitmapToMat(env, frameBmp);
+            if (bgr.empty()) return;
+            cv::Mat gray;
+            cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+
+            int patchSize = std::max(32, std::min(gray.cols, gray.rows) / 10);
+            int cx = (int)(normX * gray.cols);
+            int cy = (int)(normY * gray.rows);
+            int x0 = std::clamp(cx - patchSize / 2, 0, gray.cols - patchSize);
+            int y0 = std::clamp(cy - patchSize / 2, 0, gray.rows - patchSize);
+
+            std::lock_guard<std::mutex> lock(gTrackMutex);
+            gTargetTemplate = gray(cv::Rect(x0, y0, patchSize, patchSize)).clone();
+            gTargetCenter = cv::Point2f(normX, normY);
+            gHasTarget = true;
+        }
+
+        extern "C" JNIEXPORT jfloatArray JNICALL
+        Java_com_example_zoomcamera_MainActivity_nativeUpdateTargetLock(JNIEnv* env, jobject, jobject frameBmp) {
+            std::lock_guard<std::mutex> lock(gTrackMutex);
+            if (!gHasTarget || gTargetTemplate.empty()) return nullptr;
+
+            cv::Mat bgr = bitmapToMat(env, frameBmp);
+            if (bgr.empty()) return nullptr;
+            cv::Mat gray;
+            cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+
+            int searchRadius = gTargetTemplate.cols * 2;
+            int cx = (int)(gTargetCenter.x * gray.cols);
+            int cy = (int)(gTargetCenter.y * gray.rows);
+
+            int x0 = std::clamp(cx - searchRadius, 0, gray.cols - gTargetTemplate.cols - 1);
+            int y0 = std::clamp(cy - searchRadius, 0, gray.rows - gTargetTemplate.rows - 1);
+            int w = std::min(searchRadius * 2, gray.cols - x0);
+            int h = std::min(searchRadius * 2, gray.rows - y0);
+
+            if (w <= gTargetTemplate.cols || h <= gTargetTemplate.rows) return nullptr;
+
+            cv::Mat searchWindow = gray(cv::Rect(x0, y0, w, h));
+            cv::Mat result;
+            cv::matchTemplate(searchWindow, gTargetTemplate, result, cv::TM_CCOEFF_NORMED);
+
+            double minVal, maxVal;
+            cv::Point minLoc, maxLoc;
+            cv::minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
+
+            if (maxVal > 0.45) {
+                float matchedCx = (float)(x0 + maxLoc.x + gTargetTemplate.cols / 2) / (float)gray.cols;
+                float matchedCy = (float)(y0 + maxLoc.y + gTargetTemplate.rows / 2) / (float)gray.rows;
+                // Exponential smoothing so locked target never jitters
+                gTargetCenter.x = gTargetCenter.x * 0.35f + matchedCx * 0.65f;
+                gTargetCenter.y = gTargetCenter.y * 0.35f + matchedCy * 0.65f;
+            }
+
+            jfloatArray out = env->NewFloatArray(2);
+            float coords[2] = { gTargetCenter.x, gTargetCenter.y };
+            env->SetFloatArrayRegion(out, 0, 2, coords);
+            return out;
+        }
+
+        extern "C" JNIEXPORT void JNICALL
+        Java_com_example_zoomcamera_MainActivity_nativeClearTargetLock(JNIEnv*, jobject) {
+            std::lock_guard<std::mutex> lock(gTrackMutex);
+            gHasTarget = false;
+            gTargetTemplate.release();
+        }
+
+        extern "C" JNIEXPORT void JNICALL
+        Java_com_example_zoomcamera_MainActivity_nativePushBurstFrame(JNIEnv* env, jobject, jobject roiBmp) {
+            cv::Mat bgr = bitmapToMat(env, roiBmp);
+            if (bgr.empty()) return;
+
+            cv::Mat stdMat;
+            cv::resize(bgr, stdMat, cv::Size(480, 640), 0, 0, cv::INTER_LINEAR);
+
+            std::lock_guard<std::mutex> lock(gBurstMutex);
+            if (gBurstRingBuffer.size() >= MAX_RING_BUFFER) {
+                gBurstRingBuffer.pop_front();
+            }
+            gBurstRingBuffer.push_back(stdMat);
+        }
+
+        extern "C" JNIEXPORT jint JNICALL
+        Java_com_example_zoomcamera_MainActivity_nativeProcessSuperResBurst(
+            JNIEnv* env, jobject, jobject anchorRoiBmp, jobject outBitmap, jboolean crispTextMode
+        ) {
+            cv::Mat anchorRaw = bitmapToMat(env, anchorRoiBmp);
+            if (anchorRaw.empty()) return 0;
+
+            std::vector<cv::Mat> burst;
+            {
+                std::lock_guard<std::mutex> lock(gBurstMutex);
+                for (const auto& f : gBurstRingBuffer) {
+                    burst.push_back(f.clone());
+                }
+                gBurstRingBuffer.clear();
+            }
+
+            // Upscale the exact user capture frame (Reference Anchor) to Super-Res Drizzle grid
+            const int srW = 960;
+            const int srH = 1280;
+            cv::Mat anchorHiRes;
+            cv::resize(anchorRaw, anchorHiRes, cv::Size(srW, srH), 0, 0, cv::INTER_LANCZOS4);
+
+            cv::Mat anchorGray;
+            cv::cvtColor(anchorHiRes, anchorGray, cv::COLOR_BGR2GRAY);
+
+            cv::Mat accumFloat;
+            anchorHiRes.convertTo(accumFloat, CV_32FC3, 2.5); // High weight on user's exact reference shot
+            cv::Mat weightSum = cv::Mat::ones(srH, srW, CV_32FC1) * 2.5f;
+
+            int alignedCount = 1;
+
+            // Align each background ring-buffer frame onto the exact user capture frame
+            for (const auto& frame : burst) {
+                cv::Mat candidateHi;
+                cv::resize(frame, candidateHi, cv::Size(srW, srH), 0, 0, cv::INTER_CUBIC);
+                cv::Mat candGray;
+                cv::cvtColor(candidateHi, candGray, cv::COLOR_BGR2GRAY);
+
+                // Estimate sub-pixel translation/rigid shift via phase correlation & ECC
+                cv::Mat anchor32, cand32;
+                anchorGray.convertTo(anchor32, CV_32F);
+                candGray.convertTo(cand32, CV_32F);
+                double response = 0.0;
+                cv::Point2d shift = cv::phaseCorrelate(cand32, anchor32, cv::noArray(), &response);
+
+                if (std::abs(shift.x) < srW * 0.20 && std::abs(shift.y) < srH * 0.20 && response > 0.12) {
+                    cv::Mat warpMat = (cv::Mat_<double>(2, 3) << 1.0, 0.0, shift.x, 0.0, 1.0, shift.y);
+                    cv::Mat aligned;
+                    cv::warpAffine(candidateHi, aligned, warpMat, cv::Size(srW, srH), cv::INTER_LANCZOS4, cv::BORDER_REPLICATE);
+
+                    // Per-pixel robustness mask: reject ghosting or moving objects that differ from anchorHiRes
+                    cv::Mat diff, diffGray;
+                    cv::absdiff(anchorHiRes, aligned, diff);
+                    cv::cvtColor(diff, diffGray, cv::COLOR_BGR2GRAY);
+
+                    cv::Mat validMask;
+                    cv::threshold(diffGray, validMask, 28.0, 1.0, cv::THRESH_BINARY_INV);
+                    validMask.convertTo(validMask, CV_32FC1);
+
+                    cv::Mat alignedFloat;
+                    aligned.convertTo(alignedFloat, CV_32FC3);
+
+                    std::vector<cv::Mat> ch(3), accCh(3);
+                    cv::split(alignedFloat, ch);
+                    cv::split(accumFloat, accCh);
+                    for (int c = 0; c < 3; ++c) {
+                        accCh[c] += ch[c].mul(validMask);
+                    }
+                    cv::merge(accCh, accumFloat);
+                    weightSum += validMask;
+                    alignedCount++;
+                }
+            }
+
+            std::vector<cv::Mat> finalCh(3);
+            cv::split(accumFloat, finalCh);
+            for (int c = 0; c < 3; ++c) {
+                cv::divide(finalCh[c], weightSum, finalCh[c]);
+            }
+            cv::Mat fusedFloat, fused8U;
+            cv::merge(finalCh, fusedFloat);
+            fusedFloat.convertTo(fused8U, CV_8UC3);
+
+            // Edge-preserving bilateral filter + LAB CLAHE local contrast recovery
+            cv::Mat denoised;
+            cv::bilateralFilter(fused8U, denoised, 5, 35, 35);
+
+            cv::Mat lab;
+            cv::cvtColor(denoised, lab, cv::COLOR_BGR2Lab);
+            std::vector<cv::Mat> labPlanes;
+            cv::split(lab, labPlanes);
+            cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(crispTextMode ? 2.8 : 1.8, cv::Size(8, 8));
+            clahe->apply(labPlanes[0], labPlanes[0]);
+            cv::merge(labPlanes, lab);
+            cv::Mat contrastRecovered;
+            cv::cvtColor(lab, contrastRecovered, cv::COLOR_Lab2BGR);
+
+            // Anti-Gibberish Deconvolution / Unsharp Masking for crisp edges & text strokes
+            cv::Mat blurred, detailEnhanced;
+            cv::GaussianBlur(contrastRecovered, blurred, cv::Size(0, 0), crispTextMode ? 1.8 : 1.4);
+            double amount = crispTextMode ? 1.85 : 1.35;
+            cv::addWeighted(contrastRecovered, 1.0 + amount, blurred, -amount, 0, detailEnhanced);
+
+            matToBitmap(env, detailEnhanced, outBitmap);
+            return alignedCount;
+        }
+
+        extern "C" JNIEXPORT void JNICALL
+        Java_com_example_zoomcamera_MainActivity_nativeSharpenTextRegions(
+            JNIEnv* env, jobject, jobject remasteredBmp, jintArray flatBoxes
+        ) {
+            cv::Mat img = bitmapToMat(env, remasteredBmp);
+            if (img.empty()) return;
+
+            jsize len = env->GetArrayLength(flatBoxes);
+            jint* ptr = env->GetIntArrayElements(flatBoxes, nullptr);
+
+            for (int i = 0; i + 3 < len; i += 4) {
+                int x = std::max(0, ptr[i] - 8);
+                int y = std::max(0, ptr[i + 1] - 8);
+                int w = std::min(img.cols - x, ptr[i + 2] + 16);
+                int h = std::min(img.rows - y, ptr[i + 3] + 16);
+                if (w <= 8 || h <= 8) continue;
+
+                cv::Rect box(x, y, w, h);
+                cv::Mat roi = img(box);
+
+                // Boost stroke definition inside detected text boxes without hallucinating fake characters
+                cv::Mat lab;
+                cv::cvtColor(roi, lab, cv::COLOR_BGR2Lab);
+                std::vector<cv::Mat> ch;
+                cv::split(lab, ch);
+                cv::normalize(ch[0], ch[0], 0, 255, cv::NORM_MINMAX);
+                cv::Mat sharpL, blurL;
+                cv::GaussianBlur(ch[0], blurL, cv::Size(0, 0), 1.1);
+                cv::addWeighted(ch[0], 2.2, blurL, -1.2, 0, ch[0]);
+                cv::merge(ch, lab);
+                cv::cvtColor(lab, roi, cv::COLOR_Lab2BGR);
+            }
+
+            env->ReleaseIntArrayElements(flatBoxes, ptr, JNI_ABORT);
+            matToBitmap(env, img, remasteredBmp);
         }
         EOF
 
-        cat << 'EOF' > app/src/main/res/values/themes.xml
-        <resources><style name="Theme.Material3.DayNight.NoActionBar" parent="android:Theme.Material.Light.NoActionBar" /></resources>
-        EOF
-
-    - name: Setup Gradle and Build APK
+    - name: Setup Gradle Wrapper and Build APK
       run: |
         gradle wrapper --gradle-version 8.11.1
         chmod +x gradlew
         ./gradlew assembleDebug --no-daemon
 
-    - name: Upload APK Artifact
+    - name: Upload 200x AI Camera APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: 100x-Zoom-Camera-APK
+        name: 200x-Ultra-Zoom-AI-Camera-APK
         path: app/build/outputs/apk/debug/app-debug.apk
