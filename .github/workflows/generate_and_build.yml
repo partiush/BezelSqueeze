@@ -80,6 +80,12 @@ jobs:
         cp -r /tmp/OpenCV-android-sdk app/src/main/cpp/opencv
         cp -r /tmp/ncnn-20260526-android-vulkan app/src/main/cpp/ncnn
 
+        # --- THIS IS THE CRITICAL FIX ---
+        # Patch ncnn.cmake to remove the flags that are overriding our RTTI settings
+        echo "Patching NCNN configuration to remove -fno-rtti and -fno-exceptions..."
+        find app/src/main/cpp/ncnn -name "ncnn.cmake" -exec sed -i 's/INTERFACE_COMPILE_OPTIONS "-fno-rtti;-fno-exceptions"//g' {} \;
+        # ---------------------------------
+
         cat << 'EOF' > settings.gradle
         pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
         dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
@@ -180,12 +186,11 @@ jobs:
         }
         EOF
 
-        # --- THIS IS THE CRITICAL FIX ---
         cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
         cmake_minimum_required(VERSION 3.22.1)
         project("zoomcamera")
 
-        # Fix: Explicitly enable RTTI and Exceptions for OpenCV
+        # Explicitly enable RTTI and Exceptions for OpenCV
         set(CMAKE_ANDROID_RTTI TRUE)
         set(CMAKE_ANDROID_EXCEPTIONS TRUE)
         set(ANDROID_CPP_FEATURES "rtti exceptions")
@@ -197,7 +202,7 @@ jobs:
 
         add_library(zoomcamera SHARED native-lib.cpp)
 
-        # Fix: Force -frtti on the target
+        # Force -frtti on the target
         target_compile_options(zoomcamera PRIVATE -frtti -fexceptions)
 
         find_library(log-lib log)
