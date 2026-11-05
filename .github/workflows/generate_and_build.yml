@@ -23,68 +23,82 @@ jobs:
       with:
         packages: 'platforms;android-35 build-tools;35.0.0'
 
-    - name: Install Unzip & Setup NDK/CMake (with Retry Logic)
+    - name: Install Unzip & Setup NDK/CMake
       run: |
         set -euo pipefail
         sudo apt-get update -qq
         sudo apt-get install -y -qq unzip
 
-        # 1. Accept licenses safely (handling SIGPIPE)
+        # Handle SIGPIPE from 'yes' when accepting licenses
         yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || [[ "${PIPESTATUS[1]}" -eq 0 ]] || true
 
-        # 2. Install NDK & CMake with retry to handle corrupt downloads
-        echo "Attempting to install NDK and CMake..."
+        # Retry loop for NDK/CMake installation
         MAX_ATTEMPTS=3
         for i in $(seq 1 $MAX_ATTEMPTS); do
-          echo "Attempt $i of $MAX_ATTEMPTS..."
-          # Cleanup potential partial downloads before retrying
-          rm -rf "$ANDROID_HOME/ndk/27.2.12479018" "$ANDROID_HOME/cmake/3.22.1" "$ANDROID_HOME/.temp" "$ANDROID_HOME/.downloadIntermediates"
-          
+          echo "Attempt $i of $MAX_ATTEMPTS to install NDK and CMake..."
+          rm -rf "$ANDROID_HOME/ndk/27.2.12479018" "$ANDROID_HOME/cmake/3.22.1"
           if $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null 2>&1; then
             echo "NDK and CMake installed successfully."
             break
           fi
-          
           if [ "$i" -eq "$MAX_ATTEMPTS" ]; then
             echo "Failed to install NDK/CMake after $MAX_ATTEMPTS attempts."
             exit 1
           fi
-          echo "Installation failed. Retrying in 5 seconds..."
           sleep 5
         done
-
-        # 3. Set environment variables
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
 
-    - name: Download Native Libraries & AI Models (with Robust Retries)
+    - name: Download Native Libraries & AI Models (Robust Multi-Source)
       run: |
         set -euo pipefail
         
-        # Helper function for downloading with retries and timeouts
-        download_with_retry() {
-          local url=$1
-          local output=$2
-          wget -q --timeout=300 --tries=3 --waitretry=5 -O "$output" "$url" || { echo "Failed to download $url"; exit 1; }
-          # Verify file is not empty
-          if [ ! -s "$output" ]; then
-            echo "Error: Downloaded file $output is empty or missing."
-            exit 1
-          fi
+        # Smart downloader: Tries multiple URLs, verifies file size, retries on failure
+        download_model() {
+          local filename=$1
+          shift
+          local urls=("$@")
+          
+          for url in "${urls[@]}"; do
+            echo "Attempting to download $filename from $url ..."
+            if wget -q --timeout=60 --tries=2 -O "app/src/main/assets/models/$filename" "$url"; then
+              # Verify file is not empty (model files are usually > 10MB, param > 1KB)
+              if [ -s "app/src/main/assets/models/$filename" ]; then
+                echo "Successfully downloaded $filename"
+                return 0
+              fi
+            fi
+            echo "Failed to download from $url. Trying next source..."
+          done
+          
+          echo "ERROR: Could not download $filename from any source."
+          return 1
         }
 
-        echo "Downloading OpenCV..."
-        download_with_retry "https://github.com/opencv/opencv/releases/download/4.14.0/opencv-4.14.0-android-sdk.zip" "/tmp/opencv.zip"
+        # Download OpenCV (with retry)
+        for i in {1..3}; do
+          wget -q --timeout=300 -O /tmp/opencv.zip "https://github.com/opencv/opencv/releases/download/4.14.0/opencv-4.14.0-android-sdk.zip" && break || sleep 10
+        done
         unzip -q /tmp/opencv.zip -d /tmp/
         
-        echo "Downloading NCNN..."
-        download_with_retry "https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip" "/tmp/ncnn.zip"
+        # Download NCNN (with retry)
+        for i in {1..3}; do
+          wget -q --timeout=300 -O /tmp/ncnn.zip "https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip" && break || sleep 10
+        done
         unzip -q /tmp/ncnn.zip -d /tmp/
         
-        echo "Downloading Real-ESRGAN models..."
+        # Download Real-ESRGAN Models using the smart function
         mkdir -p app/src/main/assets/models
-        download_with_retry "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.param" "app/src/main/assets/models/realesrgan-x4plus.param"
-        download_with_retry "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.bin" "app/src/main/assets/models/realesrgan-x4plus.bin"
+        
+        # Try the official nihui release first, then the genie-design mirror
+        download_model "realesrgan-x4plus.param" \
+          "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.param" \
+          "https://raw.githubusercontent.com/genie-design/ESRGAN-ncnn-models/main/realesrgan-x4plus/realesrgan-x4plus.param"
+          
+        download_model "realesrgan-x4plus.bin" \
+          "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.bin" \
+          "https://raw.githubusercontent.com/genie-design/ESRGAN-ncnn-models/main/realesrgan-x4plus/realesrgan-x4plus.bin"
 
     - name: Generate Complete Android Project Structure
       run: |
@@ -96,7 +110,7 @@ jobs:
         cp -r /tmp/OpenCV-android-sdk app/src/main/cpp/opencv
         cp -r /tmp/ncnn-20260526-android-vulkan app/src/main/cpp/ncnn
 
-        # --- Gradle & Project Files (Collapsed for brevity, identical to previous version) ---
+        # 1. settings.gradle
         cat << 'EOF' > settings.gradle
         pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
         dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
@@ -104,6 +118,7 @@ jobs:
         include ':app'
         EOF
 
+        # 2. build.gradle (Project)
         cat << 'EOF' > build.gradle
         plugins {
             id 'com.android.application' version '8.7.3' apply false
@@ -111,12 +126,14 @@ jobs:
         }
         EOF
 
+        # 3. gradle.properties
         cat << 'EOF' > gradle.properties
         org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
         android.useAndroidX=true
         android.nonTransitiveRClass=true
         EOF
 
+        # 4. app/build.gradle
         cat << 'EOF' > app/build.gradle
         plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
         android {
@@ -144,6 +161,7 @@ jobs:
         }
         EOF
 
+        # 5. AndroidManifest.xml
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-feature android:name="android.hardware.camera" android:required="true" />
@@ -156,6 +174,7 @@ jobs:
         </manifest>
         EOF
 
+        # 6. activity_main.xml
         cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
         <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent">
@@ -168,6 +187,7 @@ jobs:
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
+        # 7. MainActivity.kt
         cat << 'EOF' > app/src/main/java/com/example/zoomcamera/MainActivity.kt
         package com.example.zoomcamera
         import android.Manifest; import android.content.pm.PackageManager; import android.os.Bundle; import android.widget.Button; import android.widget.Toast
@@ -190,6 +210,7 @@ jobs:
         }
         EOF
 
+        # 8. CMakeLists.txt
         cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
         cmake_minimum_required(VERSION 3.22.1)
         project("zoomcamera")
@@ -202,6 +223,7 @@ jobs:
         target_link_libraries(zoomcamera ${OpenCV_LIBS} ncnn ${log-lib})
         EOF
 
+        # 9. native-lib.cpp
         cat << 'EOF' > app/src/main/cpp/native-lib.cpp
         #include <jni.h>
         #include <opencv2/opencv.hpp>
@@ -216,6 +238,7 @@ jobs:
         }
         EOF
 
+        # 10. Theme
         cat << 'EOF' > app/src/main/res/values/themes.xml
         <resources><style name="Theme.Material3.DayNight.NoActionBar" parent="android:Theme.Material.Light.NoActionBar" /></resources>
         EOF
