@@ -1,4 +1,4 @@
-name: Build 100x Zoom Camera APK
+name: Build 100x Zoom Camera APK (Self-Healing)
 
 on:
   push:
@@ -18,40 +18,73 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Setup Android SDK & NDK
+    - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
         packages: 'platforms;android-35 build-tools;35.0.0'
-      
-    - name: Install Unzip & Setup NDK/CMake
+
+    - name: Install Unzip & Setup NDK/CMake (with Retry Logic)
       run: |
-        # Fix: Install unzip to prevent 'Unable to locate executable file: unzip'
+        set -euo pipefail
         sudo apt-get update -qq
         sudo apt-get install -y -qq unzip
-        
-        # Fix: Handle broken pipe from 'yes' under set -e
-        yes | sdkmanager --licenses > /dev/null 2>&1 || true
-        
-        # Install exact NDK and CMake versions required for NCNN
-        sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null 2>&1
-        
+
+        # 1. Accept licenses safely (handling SIGPIPE)
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || [[ "${PIPESTATUS[1]}" -eq 0 ]] || true
+
+        # 2. Install NDK & CMake with retry to handle corrupt downloads
+        echo "Attempting to install NDK and CMake..."
+        MAX_ATTEMPTS=3
+        for i in $(seq 1 $MAX_ATTEMPTS); do
+          echo "Attempt $i of $MAX_ATTEMPTS..."
+          # Cleanup potential partial downloads before retrying
+          rm -rf "$ANDROID_HOME/ndk/27.2.12479018" "$ANDROID_HOME/cmake/3.22.1" "$ANDROID_HOME/.temp" "$ANDROID_HOME/.downloadIntermediates"
+          
+          if $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null 2>&1; then
+            echo "NDK and CMake installed successfully."
+            break
+          fi
+          
+          if [ "$i" -eq "$MAX_ATTEMPTS" ]; then
+            echo "Failed to install NDK/CMake after $MAX_ATTEMPTS attempts."
+            exit 1
+          fi
+          echo "Installation failed. Retrying in 5 seconds..."
+          sleep 5
+        done
+
+        # 3. Set environment variables
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
 
-    - name: Download OpenCV and NCNN Libraries
+    - name: Download Native Libraries & AI Models (with Robust Retries)
       run: |
-        # Fix: Force download OpenCV 4.14.0 (latest stable Android SDK)
-        wget -q https://github.com/opencv/opencv/releases/download/4.14.0/opencv-4.14.0-android-sdk.zip
-        unzip -q opencv-4.14.0-android-sdk.zip -d /tmp/
+        set -euo pipefail
         
-        # Fix: Use compatible NCNN version (20260526) which requires NDK 27.2.12479018
-        wget -q https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip
-        unzip -q ncnn-20260526-android-vulkan.zip -d /tmp/
+        # Helper function for downloading with retries and timeouts
+        download_with_retry() {
+          local url=$1
+          local output=$2
+          wget -q --timeout=300 --tries=3 --waitretry=5 -O "$output" "$url" || { echo "Failed to download $url"; exit 1; }
+          # Verify file is not empty
+          if [ ! -s "$output" ]; then
+            echo "Error: Downloaded file $output is empty or missing."
+            exit 1
+          fi
+        }
+
+        echo "Downloading OpenCV..."
+        download_with_retry "https://github.com/opencv/opencv/releases/download/4.14.0/opencv-4.14.0-android-sdk.zip" "/tmp/opencv.zip"
+        unzip -q /tmp/opencv.zip -d /tmp/
         
-        # Download Real-ESRGAN models (using raw file URL to avoid zip extraction issues)
+        echo "Downloading NCNN..."
+        download_with_retry "https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip" "/tmp/ncnn.zip"
+        unzip -q /tmp/ncnn.zip -d /tmp/
+        
+        echo "Downloading Real-ESRGAN models..."
         mkdir -p app/src/main/assets/models
-        wget -q -O app/src/main/assets/models/realesrgan-x4plus.param https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.param
-        wget -q -O app/src/main/assets/models/realesrgan-x4plus.bin https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.bin
+        download_with_retry "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.param" "app/src/main/assets/models/realesrgan-x4plus.param"
+        download_with_retry "https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.bin" "app/src/main/assets/models/realesrgan-x4plus.bin"
 
     - name: Generate Complete Android Project Structure
       run: |
@@ -60,31 +93,17 @@ jobs:
         mkdir -p app/src/main/res/layout
         mkdir -p app/src/main/res/values
         
-        # Move downloaded native libraries into project
         cp -r /tmp/OpenCV-android-sdk app/src/main/cpp/opencv
         cp -r /tmp/ncnn-20260526-android-vulkan app/src/main/cpp/ncnn
 
-        # 1. settings.gradle
+        # --- Gradle & Project Files (Collapsed for brevity, identical to previous version) ---
         cat << 'EOF' > settings.gradle
-        pluginManagement {
-            repositories {
-                google()
-                mavenCentral()
-                gradlePluginPortal()
-            }
-        }
-        dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-            repositories {
-                google()
-                mavenCentral()
-            }
-        }
+        pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+        dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
         rootProject.name = "ZoomCamera100x"
         include ':app'
         EOF
 
-        # 2. build.gradle (Project)
         cat << 'EOF' > build.gradle
         plugins {
             id 'com.android.application' version '8.7.3' apply false
@@ -92,28 +111,20 @@ jobs:
         }
         EOF
 
-        # 3. gradle.properties
         cat << 'EOF' > gradle.properties
         org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
         android.useAndroidX=true
         android.nonTransitiveRClass=true
         EOF
 
-        # 4. app/build.gradle
         cat << 'EOF' > app/build.gradle
-        plugins {
-            id 'com.android.application'
-            id 'org.jetbrains.kotlin.android'
-        }
+        plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
         android {
             namespace 'com.example.zoomcamera'
             compileSdk 35
             defaultConfig {
                 applicationId "com.example.zoomcamera"
-                minSdk 26
-                targetSdk 35
-                versionCode 1
-                versionName "1.0"
+                minSdk 26; targetSdk 35; versionCode 1; versionName "1.0"
                 ndk { abiFilters 'arm64-v8a' }
                 externalNativeBuild { cmake { cppFlags "-std=c++17 -frtti -fexceptions" } }
             }
@@ -133,30 +144,23 @@ jobs:
         }
         EOF
 
-        # 5. AndroidManifest.xml
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-feature android:name="android.hardware.camera" android:required="true" />
             <uses-permission android:name="android.permission.CAMERA" />
             <application android:allowBackup="true" android:label="100x Zoom" android:theme="@style/Theme.Material3.DayNight.NoActionBar">
                 <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
-                    <intent-filter>
-                        <action android:name="android.intent.action.MAIN" />
-                        <category android:name="android.intent.category.LAUNCHER" />
-                    </intent-filter>
+                    <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
                 </activity>
             </application>
         </manifest>
         EOF
 
-        # 6. activity_main.xml
         cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
-        <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-            xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent">
+        <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent">
             <androidx.camera.view.PreviewView android:id="@+id/viewFinder" android:layout_width="match_parent" android:layout_height="match_parent" />
-            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical"
-                app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent" android:layout_marginBottom="32dp">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent" android:layout_marginBottom="32dp">
                 <Button android:id="@+id/btnLock" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Lock Target (Moon)" />
                 <Button android:id="@+id/btnStabilize" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Toggle Stabilization" />
                 <Button android:id="@+id/btnCapture" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Capture 100x" />
@@ -164,74 +168,28 @@ jobs:
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
-        # 7. MainActivity.kt
         cat << 'EOF' > app/src/main/java/com/example/zoomcamera/MainActivity.kt
         package com.example.zoomcamera
-        import android.Manifest
-        import android.content.pm.PackageManager
-        import android.os.Bundle
-        import android.widget.Button
-        import android.widget.Toast
-        import androidx.appcompat.app.AppCompatActivity
-        import androidx.camera.core.*
-        import androidx.camera.lifecycle.ProcessCameraProvider
-        import androidx.camera.view.PreviewView
-        import androidx.core.app.ActivityCompat
-        import androidx.core.content.ContextCompat
-
+        import android.Manifest; import android.content.pm.PackageManager; import android.os.Bundle; import android.widget.Button; import android.widget.Toast
+        import androidx.appcompat.app.AppCompatActivity; import androidx.camera.core.*; import androidx.camera.lifecycle.ProcessCameraProvider; import androidx.camera.view.PreviewView; import androidx.core.app.ActivityCompat; import androidx.core.content.ContextCompat
         class MainActivity : AppCompatActivity() {
-            private lateinit var viewFinder: PreviewView
-            private var camera: Camera? = null
-            private var isStabilized = false
-
+            private lateinit var viewFinder: PreviewView; private var camera: Camera? = null; private var isStabilized = false
             override fun onCreate(savedInstanceState: Bundle?) {
-                super.onCreate(savedInstanceState)
-                setContentView(R.layout.activity_main)
-                viewFinder = findViewById(R.id.viewFinder)
-
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                    startCamera()
-                } else {
-                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10)
-                }
-
-                findViewById<Button>(R.id.btnCapture).setOnClickListener {
-                    Toast.makeText(this, "Processing Burst & AI Upscale...", Toast.LENGTH_SHORT).show()
-                    nativeProcessBurst() 
-                }
-
-                findViewById<Button>(R.id.btnLock).setOnClickListener {
-                    val point = viewFinder.meteringPointFactory.createPoint(viewFinder.width / 2f, viewFinder.height / 2f)
-                    camera?.cameraControl?.startFocusAndMetering(FocusMeteringAction.Builder(point).build())
-                    Toast.makeText(this, "Locked on target", Toast.LENGTH_SHORT).show()
-                }
-
-                findViewById<Button>(R.id.btnStabilize).setOnClickListener {
-                    isStabilized = !isStabilized
-                    Toast.makeText(this, "Stabilization: ${if (isStabilized) "ON" else "OFF"}", Toast.LENGTH_SHORT).show()
-                }
+                super.onCreate(savedInstanceState); setContentView(R.layout.activity_main); viewFinder = findViewById(R.id.viewFinder)
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { startCamera() } else { ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 10) }
+                findViewById<Button>(R.id.btnCapture).setOnClickListener { Toast.makeText(this, "Processing Burst & AI Upscale...", Toast.LENGTH_SHORT).show(); nativeProcessBurst() }
+                findViewById<Button>(R.id.btnLock).setOnClickListener { val point = viewFinder.meteringPointFactory.createPoint(viewFinder.width / 2f, viewFinder.height / 2f); camera?.cameraControl?.startFocusAndMetering(FocusMeteringAction.Builder(point).build()); Toast.makeText(this, "Locked on target", Toast.LENGTH_SHORT).show() }
+                findViewById<Button>(R.id.btnStabilize).setOnClickListener { isStabilized = !isStabilized; Toast.makeText(this, "Stabilization: ${if (isStabilized) "ON" else "OFF"}", Toast.LENGTH_SHORT).show() }
             }
-
             private fun startCamera() {
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-                cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also { it.setSurfaceProvider(viewFinder.surfaceProvider) }
-                    camera = cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
-                    
-                    val maxZoom = camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1.0f
-                    camera?.cameraControl?.setZoomRatio(minOf(100f, maxZoom))
-                }, ContextCompat.getMainExecutor(this))
+                cameraProviderFuture.addListener({ val cameraProvider = cameraProviderFuture.get(); val preview = Preview.Builder().build().also { it.setSurfaceProvider(viewFinder.surfaceProvider) }; camera = cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview); val maxZoom = camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1.0f; camera?.cameraControl?.setZoomRatio(minOf(100f, maxZoom)) }, ContextCompat.getMainExecutor(this))
             }
-
             external fun nativeProcessBurst()
-            companion object {
-                init { System.loadLibrary("zoomcamera") }
-            }
+            companion object { init { System.loadLibrary("zoomcamera") } }
         }
         EOF
 
-        # 8. CMakeLists.txt
         cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
         cmake_minimum_required(VERSION 3.22.1)
         project("zoomcamera")
@@ -244,38 +202,28 @@ jobs:
         target_link_libraries(zoomcamera ${OpenCV_LIBS} ncnn ${log-lib})
         EOF
 
-        # 9. native-lib.cpp
         cat << 'EOF' > app/src/main/cpp/native-lib.cpp
         #include <jni.h>
         #include <opencv2/opencv.hpp>
         #include "net.h"
         #include <android/log.h>
-
         #define LOG_TAG "ZoomCamera"
         #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-
-        extern "C" JNIEXPORT void JNICALL
-        Java_com_example_zoomcamera_MainActivity_nativeProcessBurst(JNIEnv* env, jobject) {
+        extern "C" JNIEXPORT void JNICALL Java_com_example_zoomcamera_MainActivity_nativeProcessBurst(JNIEnv* env, jobject) {
             LOGI("Native Burst Processing Started");
-            ncnn::Net net;
-            net.opt.use_vulkan_compute = true;
+            ncnn::Net net; net.opt.use_vulkan_compute = true;
             LOGI("Burst aligned and queued for AI Upscaling.");
         }
         EOF
 
-        # 10. Theme & Strings
         cat << 'EOF' > app/src/main/res/values/themes.xml
-        <resources>
-            <style name="Theme.Material3.DayNight.NoActionBar" parent="android:Theme.Material.Light.NoActionBar" />
-        </resources>
+        <resources><style name="Theme.Material3.DayNight.NoActionBar" parent="android:Theme.Material.Light.NoActionBar" /></resources>
         EOF
 
     - name: Setup Gradle and Build APK
       run: |
-        # Fix: Generate Gradle wrapper dynamically to avoid version mismatch
         gradle wrapper --gradle-version 8.11.1
         chmod +x gradlew
-        # Fix: Build the APK
         ./gradlew assembleDebug --no-daemon
 
     - name: Upload APK Artifact
