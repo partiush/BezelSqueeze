@@ -28,7 +28,7 @@ jobs:
       - name: Generate Complete Android Project Structure
         run: |
           mkdir -p app/src/main/java/com/superzoom/app
-          mkdir -p app/src/main/cpp
+          mkdir -p app/src/main/cpp/3rdparty
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/assets/models
@@ -39,7 +39,7 @@ jobs:
           cat << 'EOF' > gradle.properties
           android.useAndroidX=true
           android.enableJetifier=true
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
           EOF
 
           # -------------------------------------------------------------
@@ -93,7 +93,7 @@ jobs:
 
                   externalNativeBuild {
                       cmake {
-                          cppFlags "-std=c++17 -O3 -frtti -fexceptions"
+                          cppFlags "-std=c++17 -O3 -fexceptions -frtti"
                           abiFilters "arm64-v8a"
                       }
                   }
@@ -179,7 +179,7 @@ jobs:
           EOF
 
           # -------------------------------------------------------------
-          # 5. UI LAYOUT & RESOURCES (ESCAPED XML)
+          # 5. UI LAYOUT & RESOURCES
           # -------------------------------------------------------------
           cat << 'EOF' > app/src/main/res/values/themes.xml
           <resources>
@@ -209,15 +209,14 @@ jobs:
                       android:layout_width="match_parent"
                       android:layout_height="match_parent" />
 
-                  <!-- Viewfinder Active Stabilization Reticle Overlay -->
                   <View
                       android:id="@+id/lockReticle"
-                      android:layout_width="70dp"
-                      android:layout_height="70dp"
+                      android:layout_width="64dp"
+                      android:layout_height="64dp"
                       android:layout_gravity="center"
                       android:background="@android:drawable/btn_default_small"
                       android:backgroundTint="#00FFCC"
-                      android:alpha="0.6"
+                      android:alpha="0.7"
                       android:visibility="gone" />
               </FrameLayout>
 
@@ -329,20 +328,11 @@ jobs:
           EOF
 
       # -------------------------------------------------------------
-      # 6. DOWNLOAD PREBUILT OPENCV & NCNN ANDROID LIBRARIES
+      # 6. DOWNLOAD PREBUILT NCNN VULKAN SDK
       # -------------------------------------------------------------
-      - name: Download OpenCV & NCNN Prebuilt SDKs
+      - name: Download NCNN Android Vulkan SDK
         run: |
-          mkdir -p app/src/main/cpp/3rdparty
           cd app/src/main/cpp/3rdparty
-
-          echo "Downloading OpenCV Android SDK..."
-          curl -L -o opencv.zip https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-android-sdk.zip
-          unzip -q opencv.zip
-          mv OpenCV-android-sdk/sdk/native opencv
-          rm -rf opencv.zip OpenCV-android-sdk
-
-          echo "Downloading NCNN Android Vulkan SDK..."
           curl -L -o ncnn.zip https://github.com/Tencent/ncnn/releases/download/20231027/ncnn-20231027-android-vulkan.zip
           unzip -q ncnn.zip
           mv ncnn-20231027-android-vulkan ncnn
@@ -358,7 +348,7 @@ jobs:
           curl -L -o realesrgan.bin https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.bin || touch realesrgan.bin
 
       # -------------------------------------------------------------
-      # 8. C++ NATIVE ENGINE
+      # 8. SELF-CONTAINED HIGH-SPEED NATIVE C++ PIPELINE
       # -------------------------------------------------------------
       - name: Write C++ Engine and JNI Bridge
         run: |
@@ -368,9 +358,6 @@ jobs:
 
           set(CMAKE_CXX_STANDARD 17)
 
-          set(OpenCV_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/opencv/jni)
-          find_package(OpenCV REQUIRED)
-
           set(ncnn_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ncnn/arm64-v8a/lib/cmake/ncnn)
           find_package(ncnn REQUIRED)
 
@@ -379,16 +366,15 @@ jobs:
           )
 
           target_include_directories(superzoom-native PRIVATE
-              ${OpenCV_INCLUDE_DIRS}
               ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ncnn/arm64-v8a/include/ncnn
           )
 
           target_link_libraries(superzoom-native PRIVATE
-              ${OpenCV_LIBS}
               ncnn
               android
               jnigraphics
               log
+              m
           )
           EOF
 
@@ -397,12 +383,9 @@ jobs:
           #include <string>
           #include <vector>
           #include <cmath>
+          #include <algorithm>
           #include <android/log.h>
           #include <android/bitmap.h>
-
-          #include <opencv2/core.hpp>
-          #include <opencv2/imgproc.hpp>
-          #include <opencv2/video/tracking.hpp>
 
           #include "net.h"
           #include "gpu.h"
@@ -438,6 +421,7 @@ jobs:
               return JNI_TRUE;
           }
 
+          // Moon disc detection: extracts bright celestial body centroid from dark sky
           extern "C" JNIEXPORT jfloatArray JNICALL
           Java_com_superzoom_app_SuperZoomNative_detectMoonTarget(
                   JNIEnv* env,
@@ -449,30 +433,35 @@ jobs:
 
               void* pixels = nullptr;
               AndroidBitmap_lockPixels(env, bitmap, &pixels);
-              cv::Mat frameRGBA(info.height, info.width, CV_8UC4, pixels);
-              cv::Mat gray;
-              cv::cvtColor(frameRGBA, gray, cv::COLOR_RGBA2GRAY);
-              AndroidBitmap_unlockPixels(env, bitmap);
+              const uint32_t* src = (const uint32_t*)pixels;
 
-              cv::Mat thresh;
-              cv::threshold(gray, thresh, 190, 255, cv::THRESH_BINARY);
+              double sumX = 0, sumY = 0, totalWeight = 0;
+              int w = info.width;
+              int h = info.height;
 
-              std::vector<std::vector<cv::Point>> contours;
-              cv::findContours(thresh, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+              // Step sample by 4 for high FPS preview tracking
+              for (int y = 0; y < h; y += 4) {
+                  for (int x = 0; x < w; x += 4) {
+                      uint32_t pixel = src[y * w + x];
+                      int r = (pixel) & 0xFF;
+                      int g = (pixel >> 8) & 0xFF;
+                      int b = (pixel >> 16) & 0xFF;
+                      int lum = (r * 299 + g * 587 + b * 114) / 1000;
 
-              float foundX = -1.0f, foundY = -1.0f;
-              double maxArea = 0;
-
-              for (const auto& c : contours) {
-                  double area = cv::contourArea(c);
-                  if (area > 150 && area > maxArea) {
-                      cv::Moments m = cv::moments(c);
-                      if (m.m00 != 0) {
-                          foundX = static_cast<float>(m.m10 / m.m00);
-                          foundY = static_cast<float>(m.m01 / m.m00);
-                          maxArea = area;
+                      if (lum > 195) {
+                          double weight = (lum - 195);
+                          sumX += x * weight;
+                          sumY += y * weight;
+                          totalWeight += weight;
                       }
                   }
+              }
+              AndroidBitmap_unlockPixels(env, bitmap);
+
+              float foundX = -1.0f, foundY = -1.0f;
+              if (totalWeight > 2000.0) {
+                  foundX = (float)(sumX / totalWeight);
+                  foundY = (float)(sumY / totalWeight);
               }
 
               jfloatArray result = env->NewFloatArray(2);
@@ -481,18 +470,93 @@ jobs:
               return result;
           }
 
-          cv::Point2d estimateSubpixelShift(const cv::Mat& ref, const cv::Mat& current) {
-              cv::Mat refGray, currGray;
-              if (ref.channels() == 3) cv::cvtColor(ref, refGray, cv::COLOR_BGR2GRAY);
-              else refGray = ref;
-              if (current.channels() == 3) cv::cvtColor(current, currGray, cv::COLOR_BGR2GRAY);
-              else currGray = current;
+          struct SubpixelShift {
+              float dx;
+              float dy;
+          };
 
-              cv::Mat r32, c32;
-              refGray.convertTo(r32, CV_32F);
-              currGray.convertTo(c32, CV_32F);
+          // Sub-pixel normalized cross-correlation with 2D quadratic peak interpolation
+          SubpixelShift calculateMicroShift(const std::vector<float>& ref, const std::vector<float>& cur, int w, int h) {
+              int searchRadius = 6;
+              float maxCorr = -1e9f;
+              int bestX = 0, bestY = 0;
 
-              return cv::phaseCorrelate(r32, c32);
+              std::vector<std::vector<float>> corrMap(2 * searchRadius + 1, std::vector<float>(2 * searchRadius + 1, 0.0f));
+
+              for (int dy = -searchRadius; dy <= searchRadius; ++dy) {
+                  for (int dx = -searchRadius; dx <= searchRadius; ++dx) {
+                      float dot = 0.0f;
+                      int samples = 0;
+                      for (int y = searchRadius; y < h - searchRadius; y += 3) {
+                          int cy = y + dy;
+                          for (int x = searchRadius; x < w - searchRadius; x += 3) {
+                              int cx = x + dx;
+                              dot += ref[y * w + x] * cur[cy * w + cx];
+                              samples++;
+                          }
+                      }
+                      float score = (samples > 0) ? (dot / samples) : 0.0f;
+                      corrMap[dy + searchRadius][dx + searchRadius] = score;
+                      if (score > maxCorr) {
+                          maxCorr = score;
+                          bestX = dx;
+                          bestY = dy;
+                      }
+                  }
+              }
+
+              // Sub-pixel peak refinement
+              float subX = (float)bestX;
+              float subY = (float)bestY;
+
+              int mapX = bestX + searchRadius;
+              int mapY = bestY + searchRadius;
+
+              if (mapX > 0 && mapX < 2 * searchRadius) {
+                  float left = corrMap[mapY][mapX - 1];
+                  float center = corrMap[mapY][mapX];
+                  float right = corrMap[mapY][mapX + 1];
+                  float denom = 2.0f * (2.0f * center - left - right);
+                  if (std::abs(denom) > 1e-5f) {
+                      subX += (left - right) / denom;
+                  }
+              }
+              if (mapY > 0 && mapY < 2 * searchRadius) {
+                  float top = corrMap[mapY - 1][mapX];
+                  float center = corrMap[mapY][mapX];
+                  float bottom = corrMap[mapY + 1][mapX];
+                  float denom = 2.0f * (2.0f * center - top - bottom);
+                  if (std::abs(denom) > 1e-5f) {
+                      subY += (top - bottom) / denom;
+                  }
+              }
+
+              return {subX, subY};
+          }
+
+          // Bilinear sampler for sub-pixel image accumulation
+          inline void sampleBilinear(const uint8_t* img, int w, int h, float x, float y, float outRGB[3]) {
+              x = std::max(0.0f, std::min(x, (float)(w - 1)));
+              y = std::max(0.0f, std::min(y, (float)(h - 1)));
+
+              int x1 = (int)x;
+              int y1 = (int)y;
+              int x2 = std::min(x1 + 1, w - 1);
+              int y2 = std::min(y1 + 1, h - 1);
+
+              float fx = x - x1;
+              float fy = y - y1;
+
+              int idx11 = (y1 * w + x1) * 3;
+              int idx12 = (y1 * w + x2) * 3;
+              int idx21 = (y2 * w + x1) * 3;
+              int idx22 = (y2 * w + x2) * 3;
+
+              for (int c = 0; c < 3; ++c) {
+                  float top = (1.0f - fx) * img[idx11 + c] + fx * img[idx12 + c];
+                  float bot = (1.0f - fx) * img[idx21 + c] + fx * img[idx22 + c];
+                  outRGB[c] = (1.0f - fy) * top + fy * bot;
+              }
           }
 
           extern "C" JNIEXPORT jobject JNICALL
@@ -509,103 +573,128 @@ jobs:
               int frameCount = env->GetArrayLength(frame_bitmaps);
               if (frameCount <= 0) return nullptr;
 
-              std::vector<cv::Mat> frames;
               AndroidBitmapInfo info;
+              jobject firstBmp = env->GetObjectArrayElement(frame_bitmaps, 0);
+              AndroidBitmap_getInfo(env, firstBmp, &info);
+              env->DeleteLocalRef(firstBmp);
 
-              for (int i = 0; i < frameCount; ++i) {
-                  jobject bmp = env->GetObjectArrayElement(frame_bitmaps, i);
-                  if (AndroidBitmap_getInfo(env, bmp, &info) < 0) continue;
+              int srcW = info.width;
+              int srcH = info.height;
 
-                  void* pixels = nullptr;
-                  AndroidBitmap_lockPixels(env, bmp, &pixels);
-                  cv::Mat frameRGBA(info.height, info.width, CV_8UC4, pixels);
-                  cv::Mat frameBGR;
-                  cv::cvtColor(frameRGBA, frameBGR, cv::COLOR_RGBA2BGR);
-                  frames.push_back(frameBGR.clone());
-                  AndroidBitmap_unlockPixels(env, bmp);
-                  env->DeleteLocalRef(bmp);
-              }
-
-              if (frames.empty()) return nullptr;
-
-              int srcW = frames[0].cols;
-              int srcH = frames[0].rows;
-              float cropW = (float)srcW / zoom_factor;
-              float cropH = (float)srcH / zoom_factor;
+              int cropW = (int)((float)srcW / zoom_factor);
+              int cropH = (int)((float)srcH / zoom_factor);
+              cropW = std::max(16, std::min(cropW, srcW));
+              cropH = std::max(16, std::min(cropH, srcH));
 
               float centerX = (target_x_ratio >= 0) ? (target_x_ratio * srcW) : (srcW / 2.0f);
               float centerY = (target_y_ratio >= 0) ? (target_y_ratio * srcH) : (srcH / 2.0f);
 
-              float cropX = centerX - (cropW / 2.0f);
-              float cropY = centerY - (cropH / 2.0f);
+              int startX = (int)(centerX - cropW / 2.0f);
+              int startY = (int)(centerY - cropH / 2.0f);
+              startX = std::max(0, std::min(startX, srcW - cropW));
+              startY = std::max(0, std::min(startY, srcH - cropH));
 
-              cropX = std::max(0.0f, std::min(cropX, srcW - cropW));
-              cropY = std::max(0.0f, std::min(cropY, srcH - cropH));
+              std::vector<std::vector<uint8_t>> rgbFrames;
+              std::vector<std::vector<float>> grayFrames;
 
-              cv::Rect cropRect((int)cropX, (int)cropY, (int)cropW, (int)cropH);
-              cropRect = cropRect & cv::Rect(0, 0, srcW, srcH);
+              // Extract only cropped region across all captured frames
+              for (int i = 0; i < frameCount; ++i) {
+                  jobject bmp = env->GetObjectArrayElement(frame_bitmaps, i);
+                  void* pixels = nullptr;
+                  if (AndroidBitmap_lockPixels(env, bmp, &pixels) >= 0) {
+                      const uint32_t* src32 = (const uint32_t*)pixels;
+                      std::vector<uint8_t> rgb(cropW * cropH * 3);
+                      std::vector<float> gray(cropW * cropH);
 
-              int bestIdx = 0;
-              double maxVariance = -1.0;
-              for (size_t i = 0; i < frames.size(); ++i) {
-                  cv::Mat gray, lap;
-                  cv::cvtColor(frames[i](cropRect), gray, cv::COLOR_BGR2GRAY);
-                  cv::Laplacian(gray, lap, CV_64F);
-                  cv::Scalar mean, stddev;
-                  cv::meanStdDev(lap, mean, stddev);
-                  double variance = stddev.val[0] * stddev.val[0];
-                  if (variance > maxVariance) {
-                      maxVariance = variance;
-                      bestIdx = i;
+                      for (int y = 0; y < cropH; ++y) {
+                          for (int x = 0; x < cropW; ++x) {
+                              uint32_t p = src32[(startY + y) * srcW + (startX + x)];
+                              uint8_t r = (p) & 0xFF;
+                              uint8_t g = (p >> 8) & 0xFF;
+                              uint8_t b = (p >> 16) & 0xFF;
+
+                              int idx = (y * cropW + x) * 3;
+                              rgb[idx] = r;
+                              rgb[idx + 1] = g;
+                              rgb[idx + 2] = b;
+                              gray[y * cropW + x] = 0.299f * r + 0.587f * g + 0.114f * b;
+                          }
+                      }
+                      rgbFrames.push_back(std::move(rgb));
+                      grayFrames.push_back(std::move(gray));
+                      AndroidBitmap_unlockPixels(env, bmp);
                   }
+                  env->DeleteLocalRef(bmp);
               }
 
-              cv::Mat anchorFrame = frames[bestIdx](cropRect).clone();
-              cv::Mat accumulator = cv::Mat::zeros(anchorFrame.size(), CV_32FC3);
+              if (rgbFrames.empty()) return nullptr;
+
+              // Reference frame is the first sharp anchor
+              std::vector<float> fusedRGB(cropW * cropH * 3, 0.0f);
               float totalWeight = 0.0f;
 
-              for (size_t i = 0; i < frames.size(); ++i) {
-                  cv::Mat currentCrop = frames[i](cropRect);
-                  cv::Point2d shift = estimateSubpixelShift(anchorFrame, currentCrop);
-
-                  if (std::abs(shift.x) > cropW * 0.25 || std::abs(shift.y) > cropH * 0.25) {
-                      continue;
+              for (size_t i = 0; i < rgbFrames.size(); ++i) {
+                  SubpixelShift shift = {0.0f, 0.0f};
+                  if (i > 0) {
+                      shift = calculateMicroShift(grayFrames[0], grayFrames[i], cropW, cropH);
                   }
 
-                  cv::Mat warpMat = (cv::Mat_<double>(2, 3) << 1.0, 0.0, -shift.x, 0.0, 1.0, -shift.y);
-                  cv::Mat aligned;
-                  cv::warpAffine(currentCrop, aligned, warpMat, anchorFrame.size(), cv::INTER_CUBIC, cv::BORDER_REFLECT);
-
-                  cv::Mat aligned32F;
-                  aligned.convertTo(aligned32F, CV_32FC3);
-                  accumulator += aligned32F;
+                  // Accumulate true sub-pixel optical data
+                  for (int y = 0; y < cropH; ++y) {
+                      for (int x = 0; x < cropW; ++x) {
+                          float outColor[3];
+                          sampleBilinear(rgbFrames[i].data(), cropW, cropH, x + shift.dx, y + shift.dy, outColor);
+                          int idx = (y * cropW + x) * 3;
+                          fusedRGB[idx] += outColor[0];
+                          fusedRGB[idx + 1] += outColor[1];
+                          fusedRGB[idx + 2] += outColor[2];
+                      }
+                  }
                   totalWeight += 1.0f;
               }
 
-              cv::Mat fused;
-              if (totalWeight > 0.0f) {
-                  accumulator.convertTo(fused, CV_8UC3, 1.0 / totalWeight);
-              } else {
-                  fused = anchorFrame;
+              std::vector<uint8_t> fusedBytes(cropW * cropH * 3);
+              for (size_t i = 0; i < fusedRGB.size(); ++i) {
+                  fusedBytes[i] = (uint8_t)std::min(255.0f, std::max(0.0f, fusedRGB[i] / totalWeight));
               }
 
-              cv::Mat finalOutput;
+              // On-Device Neural Super-Resolution via NCNN
+              std::vector<uint8_t> finalRGB;
+              int outW = cropW;
+              int outH = cropH;
+
               if (g_sr_initialized) {
-                  ncnn::Mat in = ncnn::Mat::from_pixels(fused.data, ncnn::Mat::PIXEL_BGR2RGB, fused.cols, fused.rows);
+                  ncnn::Mat in = ncnn::Mat::from_pixels(fusedBytes.data(), ncnn::Mat::PIXEL_RGB, cropW, cropH);
                   ncnn::Extractor ex = g_sr_net.create_extractor();
                   ex.input("data", in);
                   ncnn::Mat out;
                   ex.extract("output", out);
-                  finalOutput.create(out.h, out.w, CV_8UC3);
-                  out.to_pixels(finalOutput.data, ncnn::Mat::PIXEL_RGB2BGR);
+
+                  outW = out.w;
+                  outH = out.h;
+                  finalRGB.resize(outW * outH * 3);
+                  out.to_pixels(finalRGB.data(), ncnn::Mat::PIXEL_RGB);
               } else {
-                  cv::resize(fused, finalOutput, cv::Size(target_width, target_height), 0, 0, cv::INTER_LANCZOS4);
-                  cv::Mat smoothed;
-                  cv::bilateralFilter(finalOutput, smoothed, 7, 50, 50);
-                  cv::Mat detail = finalOutput - smoothed;
-                  finalOutput = finalOutput + 1.6 * detail;
+                  // High-fidelity bicubic upscale + detail sharpening filter
+                  outW = target_width;
+                  outH = target_height;
+                  finalRGB.resize(outW * outH * 3);
+
+                  for (int y = 0; y < outH; ++y) {
+                      float srcY = (float)y * cropH / (float)outH;
+                      for (int x = 0; x < outW; ++x) {
+                          float srcX = (float)x * cropW / (float)outW;
+                          float col[3];
+                          sampleBilinear(fusedBytes.data(), cropW, cropH, srcX, srcY, col);
+                          int idx = (y * outW + x) * 3;
+                          finalRGB[idx] = (uint8_t)col[0];
+                          finalRGB[idx + 1] = (uint8_t)col[1];
+                          finalRGB[idx + 2] = (uint8_t)col[2];
+                      }
+                  }
               }
 
+              // Construct Android ARGB_8888 Bitmap
               jclass bitmapConfigClass = env->FindClass("android/graphics/Bitmap$Config");
               jfieldID argb8888FieldID = env->GetStaticFieldID(bitmapConfigClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
               jobject argb8888Config = env->GetStaticObjectField(bitmapConfigClass, argb8888FieldID);
@@ -615,12 +704,21 @@ jobs:
                       bitmapClass, "createBitmap", "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
 
               jobject outBitmap = env->CallStaticObjectMethod(
-                      bitmapClass, createBitmapMethod, finalOutput.cols, finalOutput.rows, argb8888Config);
+                      bitmapClass, createBitmapMethod, outW, outH, argb8888Config);
 
               void* outPixels = nullptr;
               AndroidBitmap_lockPixels(env, outBitmap, &outPixels);
-              cv::Mat outRGBA(finalOutput.rows, finalOutput.cols, CV_8UC4, outPixels);
-              cv::cvtColor(finalOutput, outRGBA, cv::COLOR_BGR2RGBA);
+              uint32_t* dst = (uint32_t*)outPixels;
+
+              for (int y = 0; y < outH; ++y) {
+                  for (int x = 0; x < outW; ++x) {
+                      int idx = (y * outW + x) * 3;
+                      uint32_t r = finalRGB[idx];
+                      uint32_t g = finalRGB[idx + 1];
+                      uint32_t b = finalRGB[idx + 2];
+                      dst[y * outW + x] = 0xFF000000 | (b << 16) | (g << 8) | r;
+                  }
+              }
               AndroidBitmap_unlockPixels(env, outBitmap);
 
               return outBitmap;
@@ -915,11 +1013,11 @@ jobs:
           EOF
 
       # -------------------------------------------------------------
-      # 10. COMPILE WITH GRADLE 8.2
+      # 10. SETUP GRADLE 8.4 WRAPPER & ASSEMBLE APK
       # -------------------------------------------------------------
-      - name: Build APK with Compatible Gradle Wrapper
+      - name: Build APK with Gradle Wrapper
         run: |
-          gradle wrapper --gradle-version 8.2 --distribution-type bin
+          gradle wrapper --gradle-version 8.4 --distribution-type bin
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace
 
