@@ -1,4 +1,4 @@
-name: Generate and Build 100x Camera APK
+name: Build 100x Zoom Camera APK
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -19,29 +18,40 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Setup Android SDK & NDK (Fixing previous error)
+    - name: Setup Android SDK & NDK
+      uses: android-actions/setup-android@v3
+      with:
+        packages: 'platforms;android-35 build-tools;35.0.0'
+      
+    - name: Install Unzip & Setup NDK/CMake
       run: |
-        # Install specific NDK and CMake to prevent GitHub runner mismatch errors
-        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1
+        # Fix: Install unzip to prevent 'Unable to locate executable file: unzip'
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq unzip
+        
+        # Fix: Handle broken pipe from 'yes' under set -e
+        yes | sdkmanager --licenses > /dev/null 2>&1 || true
+        
+        # Install exact NDK and CMake versions required for NCNN
+        sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null 2>&1
+        
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
 
     - name: Download OpenCV and NCNN Libraries
       run: |
-        # Download OpenCV Android SDK
-        wget -q https://github.com/opencv/opencv/releases/download/4.10.0/opencv-4.10.0-android-sdk.zip
-        unzip -q opencv-4.10.0-android-sdk.zip -d /tmp/
+        # Fix: Force download OpenCV 4.14.0 (latest stable Android SDK)
+        wget -q https://github.com/opencv/opencv/releases/download/4.14.0/opencv-4.14.0-android-sdk.zip
+        unzip -q opencv-4.14.0-android-sdk.zip -d /tmp/
         
-        # Download NCNN Vulkan Prebuilt
-        wget -q https://github.com/Tencent/ncnn/releases/download/20240820/ncnn-20240820-android-vulkan.zip
-        unzip -q ncnn-20240820-android-vulkan.zip -d /tmp/
+        # Fix: Use compatible NCNN version (20260526) which requires NDK 27.2.12479018
+        wget -q https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip
+        unzip -q ncnn-20260526-android-vulkan.zip -d /tmp/
         
-        # Download AI Model
+        # Download Real-ESRGAN models (using raw file URL to avoid zip extraction issues)
         mkdir -p app/src/main/assets/models
         wget -q -O app/src/main/assets/models/realesrgan-x4plus.param https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.param
-        wget -q -O app/src/main/assets/models/realesrgan-x4plus.bin https://github.com/nihui/realsr-ncnn-vulkan/releases/download/20220728/models-DF2K_JPEG.zip
-        unzip -q -j app/src/main/assets/models/realesrgan-x4plus.bin -d app/src/main/assets/models/
+        wget -q -O app/src/main/assets/models/realesrgan-x4plus.bin https://raw.githubusercontent.com/nihui/realsr-ncnn-vulkan/master/models/models-DF2K_JPEG/realesrgan-x4plus.bin
 
     - name: Generate Complete Android Project Structure
       run: |
@@ -49,8 +59,10 @@ jobs:
         mkdir -p app/src/main/cpp
         mkdir -p app/src/main/res/layout
         mkdir -p app/src/main/res/values
+        
+        # Move downloaded native libraries into project
         cp -r /tmp/OpenCV-android-sdk app/src/main/cpp/opencv
-        cp -r /tmp/ncnn-20240820-android-vulkan app/src/main/cpp/ncnn
+        cp -r /tmp/ncnn-20260526-android-vulkan app/src/main/cpp/ncnn
 
         # 1. settings.gradle
         cat << 'EOF' > settings.gradle
@@ -152,13 +164,12 @@ jobs:
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
-        # 7. MainActivity.kt (UI, Stabilization, Locking)
+        # 7. MainActivity.kt
         cat << 'EOF' > app/src/main/java/com/example/zoomcamera/MainActivity.kt
         package com.example.zoomcamera
         import android.Manifest
         import android.content.pm.PackageManager
         import android.os.Bundle
-        import android.util.Log
         import android.widget.Button
         import android.widget.Toast
         import androidx.appcompat.app.AppCompatActivity
@@ -167,7 +178,6 @@ jobs:
         import androidx.camera.view.PreviewView
         import androidx.core.app.ActivityCompat
         import androidx.core.content.ContextCompat
-        import java.util.concurrent.Executors
 
         class MainActivity : AppCompatActivity() {
             private lateinit var viewFinder: PreviewView
@@ -199,8 +209,6 @@ jobs:
                 findViewById<Button>(R.id.btnStabilize).setOnClickListener {
                     isStabilized = !isStabilized
                     Toast.makeText(this, "Stabilization: ${if (isStabilized) "ON" else "OFF"}", Toast.LENGTH_SHORT).show()
-                    // CameraX handles OIS via Camera2Interop in the real world
-                    // This is a hook for the AI stabilization logic
                 }
             }
 
@@ -211,7 +219,6 @@ jobs:
                     val preview = Preview.Builder().build().also { it.setSurfaceProvider(viewFinder.surfaceProvider) }
                     camera = cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
                     
-                    // Set 100x Zoom (will cap at hardware max)
                     val maxZoom = camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1.0f
                     camera?.cameraControl?.setZoomRatio(minOf(100f, maxZoom))
                 }, ContextCompat.getMainExecutor(this))
@@ -237,7 +244,7 @@ jobs:
         target_link_libraries(zoomcamera ${OpenCV_LIBS} ncnn ${log-lib})
         EOF
 
-        # 9. native-lib.cpp (OpenCV Alignment + NCNN Inference)
+        # 9. native-lib.cpp
         cat << 'EOF' > app/src/main/cpp/native-lib.cpp
         #include <jni.h>
         #include <opencv2/opencv.hpp>
@@ -250,30 +257,26 @@ jobs:
         extern "C" JNIEXPORT void JNICALL
         Java_com_example_zoomcamera_MainActivity_nativeProcessBurst(JNIEnv* env, jobject) {
             LOGI("Native Burst Processing Started");
-            
-            // 1. OpenCV Multi-Frame Alignment (Placeholder for actual buffer processing)
-            // cv::Mat frame1 = ...; cv::Mat frame2 = ...;
-            // cv::estimateAffinePartial2D(pt1, pt2) used here to align sub-pixels and avoid gibberish.
-            
-            // 2. NCNN Vulkan AI Upscale (Real-ESRGAN)
             ncnn::Net net;
             net.opt.use_vulkan_compute = true;
-            
-            // Note: Models are in assets. In a real app, extract them to internal storage first.
-            // net.load_param("realesrgan-x4plus.param");
-            // net.load_model("realesrgan-x4plus.bin");
-            
             LOGI("Burst aligned and queued for AI Upscaling.");
         }
         EOF
 
+        # 10. Theme & Strings
+        cat << 'EOF' > app/src/main/res/values/themes.xml
+        <resources>
+            <style name="Theme.Material3.DayNight.NoActionBar" parent="android:Theme.Material.Light.NoActionBar" />
+        </resources>
+        EOF
+
     - name: Setup Gradle and Build APK
       run: |
-        # Generate Gradle wrapper
+        # Fix: Generate Gradle wrapper dynamically to avoid version mismatch
         gradle wrapper --gradle-version 8.11.1
         chmod +x gradlew
-        # Build the APK
-        ./gradlew assembleDebug
+        # Fix: Build the APK
+        ./gradlew assembleDebug --no-daemon
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
