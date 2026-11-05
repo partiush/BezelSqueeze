@@ -1,4 +1,4 @@
-name: Build 200x Ultra AI & Moon Camera APK (Vulkan Pro Edition)
+name: Build 200x Ultra AI & Moon Camera APK (Instant Boot Edition)
 
 on:
   push:
@@ -73,7 +73,7 @@ jobs:
           "https://github.com/Tencent/ncnn/releases/download/20240820/ncnn-20240820-android-vulkan.zip"
         unzip -q /tmp/ncnn.zip -d /tmp/
 
-        # 3. Official Real-ESRGAN Pre-trained Models Bundle (Photo + Fine Stroke/Signage Models)
+        # 3. Real-ESRGAN Offline Models Bundle
         mkdir -p app/src/main/assets/models
         download_file "/tmp/realesrgan-models.zip" \
           "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
@@ -89,14 +89,12 @@ jobs:
         NCNN_EXTRACTED=$(find /tmp -maxdepth 1 -type d -name "ncnn-*-android-vulkan" | head -n 1)
         cp -r "$NCNN_EXTRACTED" app/src/main/cpp/ncnn
 
-        # Bundle libopencv_java4.so and libomp.so into jniLibs/arm64-v8a
+        # Bundle libopencv_java4.so, libc++_shared.so, and libomp.so directly into jniLibs
         find /tmp/OpenCV-android-sdk -name "libopencv_java4.so" | grep "arm64-v8a" | head -n 1 | xargs -I {} cp {} app/src/main/jniLibs/arm64-v8a/
-        OMP_FILE=$(find "$ANDROID_HOME/ndk/27.2.12479018" -name "libomp.so" | grep -E "aarch64|arm64" | head -n 1 || true)
-        if [ -n "$OMP_FILE" ]; then
-          cp "$OMP_FILE" app/src/main/jniLibs/arm64-v8a/
-        fi
+        find "$ANDROID_HOME/ndk/27.2.12479018" -name "libc++_shared.so" | grep "aarch64" | head -n 1 | xargs -I {} cp {} app/src/main/jniLibs/arm64-v8a/
+        find "$ANDROID_HOME/ndk/27.2.12479018" -name "libomp.so" | grep "aarch64" | head -n 1 | xargs -I {} cp {} app/src/main/jniLibs/arm64-v8a/
 
-        # Remove forced -fno-rtti flags from ncnn cmake
+        # Remove forced -fno-rtti flags from NCNN cmake
         find app/src/main/cpp/ncnn -name "ncnn.cmake" -exec sed -i 's/INTERFACE_COMPILE_OPTIONS "-fno-rtti;-fno-exceptions"//g' {} \;
 
         cat << 'EOF' > settings.gradle
@@ -132,8 +130,8 @@ jobs:
                 applicationId "com.example.zoomcamera"
                 minSdk 26
                 targetSdk 35
-                versionCode 6
-                versionName "6.0-ProVulkan"
+                versionCode 7
+                versionName "7.0-InstantBoot"
                 ndk { abiFilters 'arm64-v8a' }
                 externalNativeBuild {
                     cmake {
@@ -171,7 +169,6 @@ jobs:
             }
             kotlinOptions {
                 jvmTarget = '17'
-                freeCompilerArgs += ["-opt-in=androidx.camera.camera2.interop.ExperimentalCamera2Interop"]
             }
         }
         dependencies {
@@ -182,7 +179,6 @@ jobs:
             implementation "androidx.camera:camera-view:${camerax_version}"
             implementation 'androidx.appcompat:appcompat:1.7.0'
             implementation 'com.google.android.material:material:1.12.0'
-            implementation 'androidx.cardview:cardview:1.0.0'
             implementation 'androidx.constraintlayout:constraintlayout:2.2.0'
             implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
             implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
@@ -199,7 +195,6 @@ jobs:
             <uses-permission android:name="android.permission.INTERNET" />
             <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
             <application
-                android:name=".ZoomCameraApp"
                 android:allowBackup="true"
                 android:largeHeap="true"
                 android:hardwareAccelerated="true"
@@ -257,26 +252,27 @@ jobs:
             android:layout_height="match_parent"
             android:background="#000000">
 
-            <FrameLayout
-                android:id="@+id/cameraViewportFrame"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
+            <!-- Full-Screen Viewfinder -->
+            <androidx.camera.view.PreviewView
+                android:id="@+id/previewView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toEndOf="parent">
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <androidx.camera.view.PreviewView
-                    android:id="@+id/previewView"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent" />
+            <!-- Overlaid Reticle, Target Box & Moon Guide Circle -->
+            <com.example.zoomcamera.CameraOverlayView
+                android:id="@+id/overlayView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <com.example.zoomcamera.CameraOverlayView
-                    android:id="@+id/overlayView"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent" />
-            </FrameLayout>
-
+            <!-- Top Header Controls -->
             <LinearLayout
                 android:id="@+id/topBar"
                 android:layout_width="match_parent"
@@ -309,18 +305,22 @@ jobs:
                     android:textSize="11sp"
                     android:backgroundTint="#222222" />
 
-                <Button
-                    android:id="@+id/btnAiModel"
+                <TextView
+                    android:id="@+id/tvAiStatus"
                     android:layout_width="wrap_content"
-                    android:layout_height="38dp"
+                    android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
-                    android:paddingHorizontal="10dp"
-                    android:text="AI: PHOTO"
+                    android:background="#55222222"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="3dp"
+                    android:text="AI: READY"
                     android:textColor="#00E676"
-                    android:textSize="11sp"
-                    android:backgroundTint="#222222" />
+                    android:textSize="10sp" />
 
-                <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
 
                 <Button
                     android:id="@+id/btnFlash"
@@ -332,6 +332,7 @@ jobs:
                     android:backgroundTint="#333333" />
             </LinearLayout>
 
+            <!-- Unlock Target Button -->
             <Button
                 android:id="@+id/btnDismissLock"
                 android:layout_width="wrap_content"
@@ -346,7 +347,7 @@ jobs:
                 app:layout_constraintTop_toBottomOf="@id/topBar"
                 app:layout_constraintStart_toStartOf="parent" />
 
-            <!-- Samsung-Style 15x+ PiP Guide Window (Built with zero-dependency FrameLayout) -->
+            <!-- Samsung-Style 15x+ PiP Guide Window -->
             <FrameLayout
                 android:id="@+id/pipContainer"
                 android:layout_width="100dp"
@@ -373,6 +374,7 @@ jobs:
                     android:background="@drawable/pip_box" />
             </FrameLayout>
 
+            <!-- Text Detection Banner -->
             <TextView
                 android:id="@+id/tvOcrBanner"
                 android:layout_width="0dp"
@@ -388,6 +390,7 @@ jobs:
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
+            <!-- Bottom Camera Controls Suite -->
             <LinearLayout
                 android:id="@+id/bottomControls"
                 android:layout_width="match_parent"
@@ -453,7 +456,10 @@ jobs:
                         android:textColor="#FFFFFF"
                         android:backgroundTint="#333333" />
 
-                    <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
 
                     <Button
                         android:id="@+id/btnShutter"
@@ -465,7 +471,10 @@ jobs:
                         android:textStyle="bold"
                         android:textSize="14sp" />
 
-                    <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
 
                     <ImageView
                         android:id="@+id/ivGallery"
@@ -476,22 +485,6 @@ jobs:
                 </LinearLayout>
             </LinearLayout>
         </androidx.constraintlayout.widget.ConstraintLayout>
-        EOF
-
-        cat << 'EOF' > app/src/main/java/com/example/zoomcamera/ZoomCameraApp.kt
-        package com.example.zoomcamera
-
-        import android.app.Application
-        import android.util.Log
-
-        class ZoomCameraApp : Application() {
-            override fun onCreate() {
-                super.onCreate()
-                Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-                    Log.e("ZoomCamera", "FATAL CRASH on thread: ${thread.name}", throwable)
-                }
-            }
-        }
         EOF
 
         cat << 'EOF' > app/src/main/java/com/example/zoomcamera/CameraOverlayView.kt
@@ -554,8 +547,8 @@ jobs:
                     canvas.drawLine(cx, cy - s - 15f, cx, cy - s + 10f, targetPaint)
                     canvas.drawLine(cx, cy + s - 10f, cy, cy + s + 15f, targetPaint)
                 } else if (isMoonMode) {
-                    canvas.drawCircle(width / 2f, height / 2f, 90f, moonPaint)
-                    canvas.drawCircle(width / 2f, height / 2f, 10f, moonPaint)
+                    canvas.drawCircle(width / 2f, height / 2f, 100f, moonPaint)
+                    canvas.drawCircle(width / 2f, height / 2f, 8f, moonPaint)
                 } else if (highZoom) {
                     canvas.drawCircle(width / 2f, height / 2f, 25f, reticlePaint)
                 }
@@ -574,12 +567,10 @@ jobs:
         import android.graphics.Bitmap
         import android.graphics.BitmapFactory
         import android.graphics.Matrix
-        import android.graphics.Rect
         import android.hardware.Sensor
         import android.hardware.SensorEvent
         import android.hardware.SensorEventListener
         import android.hardware.SensorManager
-        import android.hardware.camera2.CaptureRequest
         import android.os.Build
         import android.os.Bundle
         import android.provider.MediaStore
@@ -587,11 +578,9 @@ jobs:
         import android.view.*
         import android.widget.*
         import androidx.appcompat.app.AppCompatActivity
-        import androidx.camera.camera2.interop.Camera2Interop
         import androidx.camera.core.*
         import androidx.camera.lifecycle.ProcessCameraProvider
         import androidx.camera.view.PreviewView
-        import androidx.constraintlayout.widget.ConstraintLayout
         import androidx.core.app.ActivityCompat
         import androidx.core.content.ContextCompat
         import androidx.lifecycle.lifecycleScope
@@ -607,25 +596,22 @@ jobs:
         import java.util.concurrent.Executors
         import kotlin.math.min
 
-        enum class AspectRatioMode(val label: String, val ratioW: Int, val ratioH: Int) {
-            RATIO_4_3("4:3", 3, 4),
-            RATIO_16_9("16:9", 9, 16),
-            RATIO_1_1("1:1", 1, 1),
-            RATIO_FULL("FULL", 0, 0)
+        enum class AspectRatioMode(val label: String, val targetRatio: Int) {
+            RATIO_4_3("4:3", AspectRatio.RATIO_4_3),
+            RATIO_16_9("16:9", AspectRatio.RATIO_16_9)
         }
 
         class MainActivity : AppCompatActivity(), SensorEventListener {
 
             private lateinit var previewView: PreviewView
             private lateinit var overlayView: CameraOverlayView
-            private lateinit var cameraViewportFrame: FrameLayout
             private lateinit var pipContainer: FrameLayout
             private lateinit var ivPipBackground: ImageView
             private lateinit var vPipReticle: View
             private lateinit var btnDismissLock: Button
             private lateinit var btnAspectRatio: Button
             private lateinit var btnMoonMode: Button
-            private lateinit var btnAiModel: Button
+            private lateinit var tvAiStatus: TextView
             private lateinit var tvZoomValue: TextView
             private lateinit var tvOcrBanner: TextView
             private lateinit var seekZoom: SeekBar
@@ -637,7 +623,6 @@ jobs:
             private var flashMode = ImageCapture.FLASH_MODE_OFF
             private var currentRatio = AspectRatioMode.RATIO_4_3
             private var isMoonMode = false
-            private var currentAiModel = 0 // 0 = Photo (x4plus), 1 = Fine Stroke/Signage (x4plus-anime)
 
             private var totalZoom = 1.0f
             private var maxHardwareZoom = 8.0f
@@ -658,47 +643,63 @@ jobs:
 
             override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
-                try {
-                    setContentView(R.layout.activity_main)
+                setContentView(R.layout.activity_main)
 
-                    previewView = findViewById(R.id.previewView)
-                    overlayView = findViewById(R.id.overlayView)
-                    cameraViewportFrame = findViewById(R.id.cameraViewportFrame)
-                    pipContainer = findViewById(R.id.pipContainer)
-                    ivPipBackground = findViewById(R.id.ivPipBackground)
-                    vPipReticle = findViewById(R.id.vPipReticle)
-                    btnDismissLock = findViewById(R.id.btnDismissLock)
-                    btnAspectRatio = findViewById(R.id.btnAspectRatio)
-                    btnMoonMode = findViewById(R.id.btnMoonMode)
-                    btnAiModel = findViewById(R.id.btnAiModel)
-                    tvZoomValue = findViewById(R.id.tvZoomValue)
-                    tvOcrBanner = findViewById(R.id.tvOcrBanner)
-                    seekZoom = findViewById(R.id.seekZoom)
-                    ivGallery = findViewById(R.id.ivGallery)
+                previewView = findViewById(R.id.previewView)
+                overlayView = findViewById(R.id.overlayView)
+                pipContainer = findViewById(R.id.pipContainer)
+                ivPipBackground = findViewById(R.id.ivPipBackground)
+                vPipReticle = findViewById(R.id.vPipReticle)
+                btnDismissLock = findViewById(R.id.btnDismissLock)
+                btnAspectRatio = findViewById(R.id.btnAspectRatio)
+                btnMoonMode = findViewById(R.id.btnMoonMode)
+                tvAiStatus = findViewById(R.id.tvAiStatus)
+                tvZoomValue = findViewById(R.id.tvZoomValue)
+                tvOcrBanner = findViewById(R.id.tvOcrBanner)
+                seekZoom = findViewById(R.id.seekZoom)
+                ivGallery = findViewById(R.id.ivGallery)
 
-                    previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+                previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
 
-                    sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-                    gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+                sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+                gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
+                setupUIControls()
+                setupTouchHandlers()
+
+                // Load heavy 134MB AI models in background coroutine to keep UI responsive
+                loadAiModelsInBackground()
+
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    startCamera()
+                } else {
+                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
+                }
+            }
+
+            private fun loadAiModelsInBackground() {
+                tvAiStatus.text = "AI: LOADING..."
+                tvAiStatus.setTextColor(android.graphics.Color.parseColor("#FFD600"))
+
+                lifecycleScope.launch(Dispatchers.IO) {
                     if (isNativeLoaded) {
-                        try { nativeInitModels(assets) } catch (e: Throwable) {
-                            Log.e("ZoomCamera", "Failed to init native models", e)
+                        try {
+                            nativeInitModels(assets)
+                            withContext(Dispatchers.Main) {
+                                tvAiStatus.text = "AI: ONLINE"
+                                tvAiStatus.setTextColor(android.graphics.Color.parseColor("#00E676"))
+                            }
+                        } catch (e: Throwable) {
+                            Log.e("ZoomCamera", "Error initializing native models", e)
+                            withContext(Dispatchers.Main) {
+                                tvAiStatus.text = "AI: CPU ONLY"
+                            }
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            tvAiStatus.text = "AI: FALLBACK"
                         }
                     }
-
-                    setupUIControls()
-                    adjustViewportDimensions()
-
-                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                        startCamera()
-                    } else {
-                        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
-                    }
-                } catch (t: Throwable) {
-                    Log.e("ZoomCamera", "Error during onCreate", t)
-                    Toast.makeText(this, "Startup warning: ${t.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
 
@@ -714,14 +715,9 @@ jobs:
 
             private fun setupUIControls() {
                 btnAspectRatio.setOnClickListener {
-                    currentRatio = when (currentRatio) {
-                        AspectRatioMode.RATIO_4_3 -> AspectRatioMode.RATIO_16_9
-                        AspectRatioMode.RATIO_16_9 -> AspectRatioMode.RATIO_1_1
-                        AspectRatioMode.RATIO_1_1 -> AspectRatioMode.RATIO_FULL
-                        AspectRatioMode.RATIO_FULL -> AspectRatioMode.RATIO_4_3
-                    }
+                    currentRatio = if (currentRatio == AspectRatioMode.RATIO_4_3) AspectRatioMode.RATIO_16_9 else AspectRatioMode.RATIO_4_3
                     btnAspectRatio.text = currentRatio.label
-                    adjustViewportDimensions()
+                    startCamera()
                 }
 
                 btnMoonMode.setOnClickListener {
@@ -731,17 +727,6 @@ jobs:
                     applyMoonExposureSettings()
                     overlayView.updateOverlay(isTargetLocked, normLockX, normLockY, isMoonMode, totalZoom >= 15f)
                     Toast.makeText(this, if (isMoonMode) "Moon Mode: Auto-Underexposure & Lunar Deconvolution" else "Normal Camera Mode", Toast.LENGTH_SHORT).show()
-                }
-
-                btnAiModel.setOnClickListener {
-                    currentAiModel = (currentAiModel + 1) % 2
-                    if (currentAiModel == 0) {
-                        btnAiModel.text = "AI: PHOTO"
-                        btnAiModel.setTextColor(android.graphics.Color.parseColor("#00E676"))
-                    } else {
-                        btnAiModel.text = "AI: TEXT/SIGN"
-                        btnAiModel.setTextColor(android.graphics.Color.parseColor("#00B0FF"))
-                    }
                 }
 
                 btnDismissLock.setOnClickListener { clearTargetLock() }
@@ -783,8 +768,6 @@ jobs:
                 findViewById<Button>(R.id.btnShutter).setOnClickListener {
                     captureHardwareSensorRemaster()
                 }
-
-                setupTouchHandlers()
             }
 
             private fun setupTouchHandlers() {
@@ -819,7 +802,7 @@ jobs:
 
                         btnDismissLock.visibility = View.VISIBLE
                         updateViewportZoom()
-                        Toast.makeText(this@MainActivity, "Target Locked! Gyro-stabilizing...", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Target Locked! Stabilizing...", Toast.LENGTH_SHORT).show()
                     }
                 })
 
@@ -838,32 +821,6 @@ jobs:
                 gyroCompY = 0f
                 btnDismissLock.visibility = View.GONE
                 updateViewportZoom()
-            }
-
-            private fun adjustViewportDimensions() {
-                val root = findViewById<ConstraintLayout>(R.id.rootContainer)
-                root.post {
-                    val rootW = root.width
-                    val rootH = root.height
-                    val params = cameraViewportFrame.layoutParams as ConstraintLayout.LayoutParams
-
-                    if (currentRatio == AspectRatioMode.RATIO_FULL) {
-                        params.width = ViewGroup.LayoutParams.MATCH_PARENT
-                        params.height = ViewGroup.LayoutParams.MATCH_PARENT
-                    } else {
-                        val targetW = rootW
-                        val targetH = (rootW * currentRatio.ratioH) / currentRatio.ratioW
-                        if (targetH <= rootH) {
-                            params.width = targetW
-                            params.height = targetH
-                        } else {
-                            params.height = rootH
-                            params.width = (rootH * currentRatio.ratioW) / currentRatio.ratioH
-                        }
-                    }
-                    cameraViewportFrame.layoutParams = params
-                    updateViewportZoom()
-                }
             }
 
             private fun setZoomLevel(zoom: Float, updateSeek: Boolean) {
@@ -924,36 +881,31 @@ jobs:
             private fun startCamera() {
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
                 cameraProviderFuture.addListener({
-                    val provider = cameraProviderFuture.get()
-                    provider.unbindAll()
-
-                    val targetRatio = if (currentRatio == AspectRatioMode.RATIO_16_9) AspectRatio.RATIO_16_9 else AspectRatio.RATIO_4_3
-
-                    val previewBuilder = Preview.Builder().setTargetAspectRatio(targetRatio)
-                    Camera2Interop.Extender(previewBuilder)
-                        .setCaptureRequestOption(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
-                        .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
-
-                    val preview = previewBuilder.build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-
-                    // High-resolution hardware sensor capture
-                    imageCapture = ImageCapture.Builder()
-                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                        .setTargetAspectRatio(targetRatio)
-                        .build()
-
-                    val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
                     try {
-                        camera = provider.bindToLifecycle(this, selector, preview, imageCapture)
-                    } catch (e: Exception) {
-                        Log.e("ZoomCamera", "Failed to bind ImageCapture, falling back to preview", e)
-                        camera = provider.bindToLifecycle(this, selector, preview)
-                    }
+                        val provider = cameraProviderFuture.get()
+                        provider.unbindAll()
 
-                    maxHardwareZoom = (camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 8.0f).coerceAtLeast(1.0f)
-                    setZoomLevel(totalZoom, updateSeek = true)
+                        val preview = Preview.Builder()
+                            .setTargetAspectRatio(currentRatio.targetRatio)
+                            .build()
+                            .also {
+                                it.setSurfaceProvider(previewView.surfaceProvider)
+                            }
+
+                        imageCapture = ImageCapture.Builder()
+                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                            .setTargetAspectRatio(currentRatio.targetRatio)
+                            .build()
+
+                        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+                        camera = provider.bindToLifecycle(this, selector, preview, imageCapture)
+
+                        maxHardwareZoom = (camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 8.0f).coerceAtLeast(1.0f)
+                        setZoomLevel(totalZoom, updateSeek = true)
+                    } catch (e: Exception) {
+                        Log.e("ZoomCamera", "Failed to bind camera use cases", e)
+                        Toast.makeText(this, "Camera binding error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }, ContextCompat.getMainExecutor(this))
             }
 
@@ -995,12 +947,7 @@ jobs:
                         val activeY = (normLockY + gyroCompY).coerceIn(0.08f, 0.92f)
 
                         val cropW = (fullSensorBmp.width / softwareZoom).toInt().coerceAtLeast(64)
-                        val cropH = when (currentRatio) {
-                            AspectRatioMode.RATIO_1_1 -> cropW
-                            AspectRatioMode.RATIO_16_9 -> (cropW * 16) / 9
-                            AspectRatioMode.RATIO_4_3 -> (cropW * 4) / 3
-                            AspectRatioMode.RATIO_FULL -> (cropW * previewView.height) / previewView.width.coerceAtLeast(1)
-                        }.coerceIn(64, fullSensorBmp.height)
+                        val cropH = (fullSensorBmp.height / softwareZoom).toInt().coerceAtLeast(64)
 
                         val left = ((activeX * fullSensorBmp.width) - cropW / 2).toInt().coerceIn(0, fullSensorBmp.width - cropW)
                         val top = ((activeY * fullSensorBmp.height) - cropH / 2).toInt().coerceIn(0, fullSensorBmp.height - cropH)
@@ -1012,7 +959,7 @@ jobs:
                         lifecycleScope.launch(Dispatchers.Default) {
                             if (isNativeLoaded) {
                                 try {
-                                    nativeProcessRemaster(fullSensorBmp, left, top, cropW, cropH, outBitmap, isMoonMode, currentAiModel)
+                                    nativeProcessRemaster(fullSensorBmp, left, top, cropW, cropH, outBitmap, isMoonMode)
                                 } catch (e: Throwable) {
                                     Log.e("ZoomCamera", "Native process failed", e)
                                     val cropped = Bitmap.createBitmap(fullSensorBmp, left, top, cropW, cropH)
@@ -1105,22 +1052,20 @@ jobs:
             }
 
             external fun nativeInitModels(mgr: AssetManager)
-            external fun nativeProcessRemaster(sensorBmp: Bitmap, x: Int, y: Int, w: Int, h: Int, outBmp: Bitmap, moonMode: Boolean, modelType: Int): Int
+            external fun nativeProcessRemaster(sensorBmp: Bitmap, x: Int, y: Int, w: Int, h: Int, outBmp: Bitmap, moonMode: Boolean): Int
             external fun nativeEnhanceTextEdges(bmp: Bitmap, boxes: IntArray)
 
             companion object {
                 var isNativeLoaded = false
                 init {
-                    try {
-                        System.loadLibrary("opencv_java4")
-                    } catch (t: Throwable) {
-                        Log.w("ZoomCamera", "opencv_java4 load notice: ${t.message}")
-                    }
+                    try { System.loadLibrary("c++_shared") } catch (_: Throwable) {}
+                    try { System.loadLibrary("omp") } catch (_: Throwable) {}
+                    try { System.loadLibrary("opencv_java4") } catch (_: Throwable) {}
                     try {
                         System.loadLibrary("zoomcamera")
                         isNativeLoaded = true
                     } catch (t: Throwable) {
-                        Log.e("ZoomCamera", "zoomcamera load error: ${t.message}")
+                        Log.e("ZoomCamera", "zoomcamera native load error: ${t.message}")
                         isNativeLoaded = false
                     }
                 }
@@ -1180,15 +1125,12 @@ jobs:
         #include "net.h"
         #include "gpu.h"
         #include <vector>
-        #include <algorithm>
 
         #define LOG_TAG "ProMoonEngine"
         #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
         static ncnn::Net gNetPhoto;
-        static ncnn::Net gNetFine;
         static bool gPhotoLoaded = false;
-        static bool gFineLoaded = false;
 
         static cv::Mat bitmapToMat(JNIEnv* env, jobject bitmap) {
             AndroidBitmapInfo info;
@@ -1225,7 +1167,6 @@ jobs:
 
             ncnn::create_gpu_instance();
 
-            // Setup Photo Model
             gNetPhoto.opt.use_vulkan_compute = (ncnn::get_gpu_count() > 0);
             gNetPhoto.opt.use_fp16_packed = true;
             gNetPhoto.opt.use_fp16_storage = true;
@@ -1239,26 +1180,10 @@ jobs:
             int m1 = gNetPhoto.load_model(mgr, "models/realesrgan-x4plus.bin");
             gPhotoLoaded = (p1 == 0 && m1 == 0);
 
-            // Setup Fine Stroke/Signage Model
-            gNetFine.opt.use_vulkan_compute = (ncnn::get_gpu_count() > 0);
-            gNetFine.opt.use_fp16_packed = true;
-            gNetFine.opt.use_fp16_storage = true;
-            gNetFine.opt.use_fp16_arithmetic = true;
-            gNetFine.opt.num_threads = 8;
-            if (gNetFine.opt.use_vulkan_compute) {
-                gNetFine.set_vulkan_device(ncnn::get_default_gpu_index());
-            }
-
-            int p2 = gNetFine.load_param(mgr, "models/realesrgan-x4plus-anime.param");
-            int m2 = gNetFine.load_model(mgr, "models/realesrgan-x4plus-anime.bin");
-            gFineLoaded = (p2 == 0 && m2 == 0);
-
-            LOGI("Real-ESRGAN Models Status: Photo=%d, FineStroke=%d, VulkanGPU=%d",
-                 gPhotoLoaded, gFineLoaded, gNetPhoto.opt.use_vulkan_compute);
+            LOGI("Real-ESRGAN Model Loaded: %d, VulkanGPU: %d", gPhotoLoaded, gNetPhoto.opt.use_vulkan_compute);
         }
 
         static cv::Mat runNcnnSuperResolution(ncnn::Net& net, const cv::Mat& cropBgr, int targetW, int targetH) {
-            // Resize crop to optimal model tile dimension (256x256) to ensure low latency and zero OOM
             int inW = 256;
             int inH = 256;
             ncnn::Mat in = ncnn::Mat::from_pixels_resize(cropBgr.data, ncnn::Mat::PIXEL_BGR2RGB, cropBgr.cols, cropBgr.rows, inW, inH);
@@ -1285,7 +1210,7 @@ jobs:
 
         extern "C" JNIEXPORT jint JNICALL
         Java_com_example_zoomcamera_MainActivity_nativeProcessRemaster(
-            JNIEnv* env, jobject, jobject sensorBmp, jint cropX, jint cropY, jint cropW, jint cropH, jobject outBmp, jboolean moonMode, jint modelType
+            JNIEnv* env, jobject, jobject sensorBmp, jint cropX, jint cropY, jint cropW, jint cropH, jobject outBmp, jboolean moonMode
         ) {
             cv::Mat fullSensor = bitmapToMat(env, sensorBmp);
             if (fullSensor.empty()) return 0;
@@ -1302,7 +1227,6 @@ jobs:
             cv::Mat resultImg;
 
             if (moonMode) {
-                // Samsung-Style Astronomical Lunar Crater Reconstruction
                 cv::Mat hiRes;
                 cv::resize(crop, hiRes, cv::Size(targetW, targetH), 0, 0, cv::INTER_LANCZOS4);
 
@@ -1311,11 +1235,9 @@ jobs:
                 std::vector<cv::Mat> labCh;
                 cv::split(lab, labCh);
 
-                // High-contrast crater enhancement on L-channel
                 cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(4.0, cv::Size(8, 8));
                 clahe->apply(labCh[0], labCh[0]);
 
-                // Lunar Maria and Rim Deconvolution
                 cv::Mat blurM, sharpM;
                 cv::GaussianBlur(labCh[0], blurM, cv::Size(0, 0), 1.8);
                 cv::addWeighted(labCh[0], 2.4, blurM, -1.4, 0, sharpM);
@@ -1324,21 +1246,12 @@ jobs:
                 cv::merge(labCh, lab);
                 cv::cvtColor(lab, resultImg, cv::COLOR_Lab2BGR);
             } else {
-                // Execute Real-ESRGAN Neural Network on GPU/NEON
-                bool executed = false;
-                if (modelType == 1 && gFineLoaded) {
-                    resultImg = runNcnnSuperResolution(gNetFine, crop, targetW, targetH);
-                    executed = true;
-                } else if (gPhotoLoaded) {
+                if (gPhotoLoaded) {
                     resultImg = runNcnnSuperResolution(gNetPhoto, crop, targetW, targetH);
-                    executed = true;
-                }
-
-                if (!executed) {
+                } else {
                     cv::resize(crop, resultImg, cv::Size(targetW, targetH), 0, 0, cv::INTER_LANCZOS4);
                 }
 
-                // Apply dynamic range local contrast preservation
                 cv::Mat lab;
                 cv::cvtColor(resultImg, lab, cv::COLOR_BGR2Lab);
                 std::vector<cv::Mat> labCh;
@@ -1410,8 +1323,8 @@ jobs:
         chmod +x gradlew
         ./gradlew assembleDebug --no-daemon
 
-    - name: Upload 200x Pro Vulkan Camera APK
+    - name: Upload 200x AI Camera APK
       uses: actions/upload-artifact@v4
       with:
-        name: 200x-Ultra-Camera-ProVulkan-APK
+        name: 200x-Ultra-Camera-InstantBoot-APK
         path: app/build/outputs/apk/debug/app-debug.apk
