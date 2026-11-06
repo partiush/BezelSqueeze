@@ -1,4 +1,4 @@
-name: Build 200x Ultra AI & Moon Camera APK (Bugfix Edition)
+name: Build 200x Ultra AI & Moon Camera APK (Linker Fix Edition)
 
 on:
   push:
@@ -93,14 +93,12 @@ jobs:
         NCNN_EXTRACTED=$(find /tmp -maxdepth 1 -type d -name "ncnn-*-android-vulkan" | head -n 1)
         cp -r "$NCNN_EXTRACTED" app/src/main/cpp/ncnn
 
-        # Copy OpenCV and OpenMP runtime libraries into jniLibs
         cp app/src/main/cpp/opencv/sdk/native/libs/arm64-v8a/libopencv_java4.so app/src/main/jniLibs/arm64-v8a/
         OMP_FILE=$(find "$ANDROID_HOME/ndk/27.2.12479018" -name "libomp.so" | grep -E "aarch64|arm64" | head -n 1 || true)
         if [ -n "$OMP_FILE" ]; then
           cp "$OMP_FILE" app/src/main/jniLibs/arm64-v8a/
         fi
 
-        # Remove forced -fno-rtti flags from NCNN cmake
         find app/src/main/cpp/ncnn -name "*.cmake" -exec sed -i 's/-fno-rtti//g; s/-fno-exceptions//g' {} \;
 
         cat << 'EOF' > settings.gradle
@@ -136,8 +134,8 @@ jobs:
                 applicationId "com.example.zoomcamera"
                 minSdk 26
                 targetSdk 35
-                versionCode 9
-                versionName "9.0-RockSolid"
+                versionCode 10
+                versionName "10.0-Fixed"
                 ndk { abiFilters 'arm64-v8a' }
                 externalNativeBuild {
                     cmake {
@@ -601,7 +599,6 @@ jobs:
         }
         EOF
 
-        # --- BUGFIX: Disambiguate androidx.camera.core.Camera from android.graphics.Camera ---
         cat << 'EOF' > app/src/main/java/com/example/zoomcamera/MainActivity.kt
         package com.example.zoomcamera
 
@@ -696,7 +693,6 @@ jobs:
             private lateinit var seekExposure: SeekBar
             private lateinit var ivGallery: ImageView
 
-            // Explicitly qualified to avoid ambiguity with android.graphics.Camera
             private var camera: androidx.camera.core.Camera? = null
             private var imageCapture: ImageCapture? = null
             private var lensFacing = CameraSelector.LENS_FACING_BACK
@@ -1369,6 +1365,7 @@ jobs:
         )
         EOF
 
+        # --- BUGFIX: Export the missing __hash_memory symbols required by libglslang.a in NDK 27 ---
         cat << 'EOF' > app/src/main/cpp/native-lib.cpp
         #include <jni.h>
         #include <android/bitmap.h>
@@ -1383,6 +1380,37 @@ jobs:
 
         #define LOG_TAG "ZoomCamera200x"
         #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+        // -----------------------------------------------------------------------------
+        // NDK r27 glslang Compatibility Shim:
+        // libglslang.a from NCNN prebuilts expects std::__ndk1::__hash_memory from libc++,
+        // which NDK r27 inlines. We provide both 64-bit and 32-bit mangled definitions here.
+        // -----------------------------------------------------------------------------
+        extern "C" __attribute__((visibility("default"), used))
+        size_t _ZNSt6__ndk113__hash_memoryEPKvm(const void* ptr, size_t size) noexcept {
+            const auto* data = static_cast<const unsigned char*>(ptr);
+            size_t h = 2166136261u;
+            for (size_t i = 0; i < size; ++i) {
+                h = (h ^ data[i]) * 16777619u;
+            }
+            return h;
+        }
+
+        extern "C" __attribute__((visibility("default"), used))
+        size_t _ZNSt3__113__hash_memoryEPKvm(const void* ptr, size_t size) noexcept {
+            return _ZNSt6__ndk113__hash_memoryEPKvm(ptr, size);
+        }
+
+        extern "C" __attribute__((visibility("default"), used))
+        size_t _ZNSt6__ndk113__hash_memoryEPKvj(const void* ptr, size_t size) noexcept {
+            return _ZNSt6__ndk113__hash_memoryEPKvm(ptr, size);
+        }
+
+        extern "C" __attribute__((visibility("default"), used))
+        size_t _ZNSt3__113__hash_memoryEPKvj(const void* ptr, size_t size) noexcept {
+            return _ZNSt6__ndk113__hash_memoryEPKvm(ptr, size);
+        }
+        // -----------------------------------------------------------------------------
 
         static ncnn::Net gNetPhoto;
         static ncnn::Net gNetText;
