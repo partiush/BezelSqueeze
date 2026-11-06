@@ -1,4 +1,4 @@
-name: Build 200x Ultra AI & Moon Camera APK (Nov 2026 Pro Edition)
+name: Build 200x Ultra AI & Moon Camera APK (Bugfix Edition)
 
 on:
   push:
@@ -47,7 +47,7 @@ jobs:
         echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
         echo "PATH=$ANDROID_HOME/cmake/3.22.1/bin:$PATH" >> $GITHUB_ENV
 
-    - name: Download Latest Nov 2026 OpenCV, NCNN & Real-ESRGAN AI Models
+    - name: Download Latest OpenCV, NCNN & Real-ESRGAN AI Models
       run: |
         set -euo pipefail
         download_file() {
@@ -63,21 +63,21 @@ jobs:
           return 1
         }
 
-        # 1. Latest OpenCV Android SDK (4.12.0 / 4.11.0 fallback)
+        # 1. OpenCV Android SDK
         download_file "/tmp/opencv.zip" \
           "https://github.com/opencv/opencv/releases/download/4.12.0/opencv-4.12.0-android-sdk.zip" \
           "https://github.com/opencv/opencv/releases/download/4.11.0/opencv-4.11.0-android-sdk.zip" \
           "https://github.com/opencv/opencv/releases/download/4.10.0/opencv-4.10.0-android-sdk.zip"
         unzip -q /tmp/opencv.zip -d /tmp/
 
-        # 2. Latest Tencent NCNN Android Vulkan SDK (20261020 / 20260526 / 20241226 fallback)
+        # 2. Tencent NCNN Android Vulkan SDK
         download_file "/tmp/ncnn.zip" \
           "https://github.com/Tencent/ncnn/releases/download/20261020/ncnn-20261020-android-vulkan.zip" \
           "https://github.com/Tencent/ncnn/releases/download/20260526/ncnn-20260526-android-vulkan.zip" \
           "https://github.com/Tencent/ncnn/releases/download/20241226/ncnn-20241226-android-vulkan.zip"
         unzip -q /tmp/ncnn.zip -d /tmp/
 
-        # 3. Real-ESRGAN Dual Neural Models (x4plus for Photo/Texture + x4plus-anime for Crisp Text/Signage)
+        # 3. Real-ESRGAN Dual Neural Models Bundle
         mkdir -p app/src/main/assets/models
         download_file "/tmp/realesrgan-models.zip" \
           "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
@@ -93,10 +93,14 @@ jobs:
         NCNN_EXTRACTED=$(find /tmp -maxdepth 1 -type d -name "ncnn-*-android-vulkan" | head -n 1)
         cp -r "$NCNN_EXTRACTED" app/src/main/cpp/ncnn
 
-        # Copy ONLY the Android arm64-v8a OpenCV shared library; Gradle + CMake handles c++_shared and static OpenMP
+        # Copy OpenCV and OpenMP runtime libraries into jniLibs
         cp app/src/main/cpp/opencv/sdk/native/libs/arm64-v8a/libopencv_java4.so app/src/main/jniLibs/arm64-v8a/
+        OMP_FILE=$(find "$ANDROID_HOME/ndk/27.2.12479018" -name "libomp.so" | grep -E "aarch64|arm64" | head -n 1 || true)
+        if [ -n "$OMP_FILE" ]; then
+          cp "$OMP_FILE" app/src/main/jniLibs/arm64-v8a/
+        fi
 
-        # Patch NCNN cmake so it never strips RTTI or C++ exceptions required by OpenCV
+        # Remove forced -fno-rtti flags from NCNN cmake
         find app/src/main/cpp/ncnn -name "*.cmake" -exec sed -i 's/-fno-rtti//g; s/-fno-exceptions//g' {} \;
 
         cat << 'EOF' > settings.gradle
@@ -132,12 +136,12 @@ jobs:
                 applicationId "com.example.zoomcamera"
                 minSdk 26
                 targetSdk 35
-                versionCode 8
-                versionName "8.0-Nov2026-Pro"
+                versionCode 9
+                versionName "9.0-RockSolid"
                 ndk { abiFilters 'arm64-v8a' }
                 externalNativeBuild {
                     cmake {
-                        cppFlags "-std=c++17 -frtti -fexceptions -O3 -fopenmp -static-openmp"
+                        cppFlags "-std=c++17 -frtti -fexceptions -O3 -fopenmp"
                         arguments "-DANDROID_CPP_FEATURES=rtti exceptions", "-DANDROID_STL=c++_shared"
                     }
                 }
@@ -150,6 +154,7 @@ jobs:
                     useLegacyPackaging = true
                     pickFirsts += [
                         'lib/arm64-v8a/libc++_shared.so',
+                        'lib/arm64-v8a/libomp.so',
                         'lib/arm64-v8a/libopencv_java4.so'
                     ]
                 }
@@ -175,11 +180,10 @@ jobs:
             }
             kotlinOptions {
                 jvmTarget = '17'
-                freeCompilerArgs += ["-opt-in=androidx.camera.camera2.interop.ExperimentalCamera2Interop"]
             }
         }
         dependencies {
-            def camerax_version = "1.5.1"
+            def camerax_version = "1.4.1"
             implementation "androidx.camera:camera-core:${camerax_version}"
             implementation "androidx.camera:camera-camera2:${camerax_version}"
             implementation "androidx.camera:camera-lifecycle:${camerax_version}"
@@ -203,7 +207,6 @@ jobs:
             <application
                 android:allowBackup="true"
                 android:largeHeap="true"
-                android:extractNativeLibs="true"
                 android:hardwareAccelerated="true"
                 android:label="200x Ultra AI Cam"
                 android:theme="@style/AppTheme">
@@ -259,7 +262,6 @@ jobs:
             android:layout_height="match_parent"
             android:background="#000000">
 
-            <!-- Strict Aspect-Ratio Viewport Box: Clips & Centers Preview so it NEVER stretches -->
             <FrameLayout
                 android:id="@+id/viewportContainer"
                 android:layout_width="0dp"
@@ -284,7 +286,6 @@ jobs:
                     android:layout_height="match_parent" />
             </FrameLayout>
 
-            <!-- Top Controls Bar -->
             <LinearLayout
                 android:id="@+id/topBar"
                 android:layout_width="match_parent"
@@ -346,7 +347,6 @@ jobs:
                     android:backgroundTint="#333333" />
             </LinearLayout>
 
-            <!-- Status Pill + Target Unlock Button -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -379,7 +379,6 @@ jobs:
                     android:visibility="gone" />
             </LinearLayout>
 
-            <!-- Samsung-Style 15x-200x Picture-in-Picture Zoom Map -->
             <FrameLayout
                 android:id="@+id/pipContainer"
                 android:layout_width="108dp"
@@ -405,7 +404,6 @@ jobs:
                     android:background="@drawable/pip_box" />
             </FrameLayout>
 
-            <!-- OCR Readable Text Overlay Banner -->
             <TextView
                 android:id="@+id/tvOcrBanner"
                 android:layout_width="0dp"
@@ -421,7 +419,6 @@ jobs:
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- Bottom Camera Controls Suite -->
             <LinearLayout
                 android:id="@+id/bottomControls"
                 android:layout_width="match_parent"
@@ -432,7 +429,6 @@ jobs:
                 android:paddingVertical="10dp"
                 app:layout_constraintBottom_toBottomOf="parent">
 
-                <!-- Exposure EV Slider + Current Zoom Readout -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -472,7 +468,6 @@ jobs:
                         android:progress="0" />
                 </LinearLayout>
 
-                <!-- Quick Zoom Presets -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -488,7 +483,6 @@ jobs:
                     <Button android:id="@+id/btnZ200" style="@style/Widget.Material3.Button.TextButton" android:layout_width="58dp" android:layout_height="36dp" android:padding="0dp" android:text="200x" android:textColor="#FF5252" />
                 </LinearLayout>
 
-                <!-- Shutter Row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -540,7 +534,9 @@ jobs:
         package com.example.zoomcamera
 
         import android.content.Context
-        import android.graphics.*
+        import android.graphics.Canvas
+        import android.graphics.Color
+        import android.graphics.Paint
         import android.util.AttributeSet
         import android.view.View
 
@@ -605,6 +601,7 @@ jobs:
         }
         EOF
 
+        # --- BUGFIX: Disambiguate androidx.camera.core.Camera from android.graphics.Camera ---
         cat << 'EOF' > app/src/main/java/com/example/zoomcamera/MainActivity.kt
         package com.example.zoomcamera
 
@@ -612,7 +609,15 @@ jobs:
         import android.content.ContentValues
         import android.content.Context
         import android.content.pm.PackageManager
-        import android.graphics.*
+        import android.graphics.Bitmap
+        import android.graphics.BitmapFactory
+        import android.graphics.Canvas
+        import android.graphics.Color
+        import android.graphics.Matrix
+        import android.graphics.Paint
+        import android.graphics.Rect
+        import android.graphics.RenderEffect
+        import android.graphics.RuntimeShader
         import android.hardware.Sensor
         import android.hardware.SensorEvent
         import android.hardware.SensorEventListener
@@ -622,10 +627,27 @@ jobs:
         import android.provider.MediaStore
         import android.util.Log
         import android.util.Size
-        import android.view.*
-        import android.widget.*
+        import android.view.GestureDetector
+        import android.view.MotionEvent
+        import android.view.ScaleGestureDetector
+        import android.view.View
+        import android.widget.Button
+        import android.widget.FrameLayout
+        import android.widget.ImageView
+        import android.widget.LinearLayout
+        import android.widget.SeekBar
+        import android.widget.TextView
+        import android.widget.Toast
         import androidx.appcompat.app.AppCompatActivity
-        import androidx.camera.core.*
+        import androidx.camera.core.AspectRatio
+        import androidx.camera.core.Camera
+        import androidx.camera.core.CameraSelector
+        import androidx.camera.core.FocusMeteringAction
+        import androidx.camera.core.ImageAnalysis
+        import androidx.camera.core.ImageCapture
+        import androidx.camera.core.ImageCaptureException
+        import androidx.camera.core.ImageProxy
+        import androidx.camera.core.Preview
         import androidx.camera.lifecycle.ProcessCameraProvider
         import androidx.camera.view.PreviewView
         import androidx.constraintlayout.widget.ConstraintLayout
@@ -674,19 +696,19 @@ jobs:
             private lateinit var seekExposure: SeekBar
             private lateinit var ivGallery: ImageView
 
-            private var camera: Camera? = null
+            // Explicitly qualified to avoid ambiguity with android.graphics.Camera
+            private var camera: androidx.camera.core.Camera? = null
             private var imageCapture: ImageCapture? = null
             private var lensFacing = CameraSelector.LENS_FACING_BACK
             private var flashMode = ImageCapture.FLASH_MODE_OFF
             private var currentRatio = AspectRatioOption.RATIO_4_3
             private var isMoonMode = false
-            private var currentAiMode = 0 // 0 = ULTRA HD (Photo), 1 = CRISP TEXT (Signage/OCR)
+            private var currentAiMode = 0
 
             private var totalZoom = 1.0f
             private var maxHardwareZoom = 8.0f
             private var softwareZoom = 1.0f
 
-            // Target Lock & Stabilization Coordinates
             @Volatile private var isTargetLocked = false
             @Volatile private var normLockX = 0.5f
             @Volatile private var normLockY = 0.5f
@@ -727,7 +749,6 @@ jobs:
                 seekExposure = findViewById(R.id.seekExposure)
                 ivGallery = findViewById(R.id.ivGallery)
 
-                // Use COMPATIBLE (TextureView) so GPU matrix scaling & AGSL shaders work smoothly at 60 FPS
                 previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
 
@@ -743,7 +764,6 @@ jobs:
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
                 }
 
-                // Lazily load native libraries & extract AI models in background AFTER UI is already running
                 initializeNativeAndAiAsync()
             }
 
@@ -993,7 +1013,6 @@ jobs:
                     }
                 }
 
-                // Apply Real-Time GPU Contrast Adaptive Sharpening (CAS) shader on Android 13+ (API 33+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     try {
                         if (totalZoom > 4.0f || isMoonMode) {
@@ -1041,7 +1060,6 @@ jobs:
                 val activeX = (normLockX + gyroCompX).coerceIn(0.06f, 0.94f)
                 val activeY = (normLockY + gyroCompY).coerceIn(0.06f, 0.94f)
 
-                // Uniform X & Y scale + translation centered inside clipped viewportContainer (Zero stretch!)
                 previewView.pivotX = viewW / 2f
                 previewView.pivotY = viewH / 2f
                 previewView.scaleX = softwareZoom
@@ -1099,7 +1117,6 @@ jobs:
 
                         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
 
-                        // Safely bind Preview + ImageCapture + Analysis, with automatic 2-stream fallback
                         camera = try {
                             provider.bindToLifecycle(this, selector, preview, imageCapture, analysis)
                         } catch (_: Exception) {
@@ -1334,8 +1351,7 @@ jobs:
         add_library(zoomcamera SHARED native-lib.cpp)
 
         target_compile_options(zoomcamera PRIVATE -frtti -fexceptions -O3 -fopenmp)
-        # Enforce 16KB ELF page alignment & static OpenMP so Android 15/16 never blocks dlopen
-        target_link_options(zoomcamera PRIVATE "-Wl,-z,max-page-size=16384" "-static-openmp")
+        target_link_options(zoomcamera PRIVATE "-Wl,-z,max-page-size=16384" "-fopenmp")
 
         find_library(log-lib log)
         find_library(android-lib android)
@@ -1416,7 +1432,6 @@ jobs:
             std::string dir(dirChars);
             env->ReleaseStringUTFChars(modelDirJstr, dirChars);
 
-            // Use 8-thread ARM64 NEON FP16 execution: 100% crash-free across all mobile GPUs
             gNetPhoto.opt.use_vulkan_compute = false;
             gNetPhoto.opt.num_threads = 8;
             gNetPhoto.opt.use_fp16_packed = true;
@@ -1580,13 +1595,11 @@ jobs:
             int targetW = outInfo.width;
             int targetH = outInfo.height;
 
-            // Step 1: High-Order Lanczos4 Reference Anchor
             cv::Mat hiAnchor;
             cv::resize(anchorCrop, hiAnchor, cv::Size(targetW, targetH), 0, 0, cv::INTER_LANCZOS4);
             cv::Mat anchorGray;
             cv::cvtColor(hiAnchor, anchorGray, cv::COLOR_BGR2GRAY);
 
-            // Step 2: Sub-Pixel Multi-Frame Drizzle Fusion anchored strictly to user's shot
             cv::Mat accum;
             hiAnchor.convertTo(accum, CV_32FC3, 3.0);
             cv::Mat weightSum = cv::Mat::ones(targetH, targetW, CV_32FC1) * 3.0f;
@@ -1639,13 +1652,11 @@ jobs:
             cv::Mat finalResult;
 
             if (moonMode) {
-                // Step 3A: RegiStax-Style Lunar Wavelet Deconvolution & Space Masking
                 cv::Mat lab;
                 cv::cvtColor(drizzled8U, lab, cv::COLOR_BGR2Lab);
                 std::vector<cv::Mat> labCh;
                 cv::split(lab, labCh);
 
-                // Suppress deep-sky background noise outside the lunar disc
                 cv::Mat skyMask;
                 cv::threshold(labCh[0], skyMask, 28, 255, cv::THRESH_TOZERO);
                 labCh[0] = skyMask;
@@ -1653,7 +1664,6 @@ jobs:
                 cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(4.2, cv::Size(8, 8));
                 clahe->apply(labCh[0], labCh[0]);
 
-                // Multi-scale wavelet decomposition (Fine + Medium crater rims)
                 cv::Mat L32, blurFine, blurMed;
                 labCh[0].convertTo(L32, CV_32F);
                 cv::GaussianBlur(L32, blurFine, cv::Size(0, 0), 1.2);
@@ -1664,14 +1674,12 @@ jobs:
                 cv::Mat recon = L32 + (wFine * 2.1f) + (wMed * 1.4f);
                 recon.convertTo(labCh[0], CV_8U);
 
-                // Neutralize chromatic lens fringing on the moon
                 labCh[1] = cv::Scalar(128);
                 labCh[2] = cv::Scalar(130);
 
                 cv::merge(labCh, lab);
                 cv::cvtColor(lab, finalResult, cv::COLOR_Lab2BGR);
             } else {
-                // Step 3B: Neural Super-Resolution Blended with Optical Drizzle (Anti-Gibberish)
                 cv::Mat neuralSr;
                 if (aiMode == 1 && gTextReady) {
                     neuralSr = runRealEsrganInference(gNetText, anchorCrop, targetW, targetH);
@@ -1681,7 +1689,6 @@ jobs:
                     neuralSr = drizzled8U;
                 }
 
-                // 60% Multi-Frame Optical Drizzle + 40% Neural Edge Synthesis prevents plastic AI hallucinations
                 cv::Mat blended;
                 cv::addWeighted(drizzled8U, 0.60, neuralSr, 0.40, 0, blended);
 
